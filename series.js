@@ -66,17 +66,6 @@
     BaseSeries.prototype.constructor = BaseSeries;
 
     var Series = function Series(){
-        if(arguments.length){
-            if(Series.prototype.isPrototypeOf(arguments[0])){
-                //if(this!==scope)
-            }
-            else if(typeof arguments[0]=='object'){
-
-            }
-        }
-        else{
-        }
-
         var args = (arguments[0] instanceof Array) ? arguments[0] : arguments;
         var series = new BaseSeries(args);
 
