@@ -6,9 +6,14 @@
             return "Null";
         if(obj instanceof Series || obj instanceof BaseSeries)
             return obj.toString(obj).slice(8, -1);
-        //if(obj.toString)
-            //return obj.toString().slice(8, -1);
         return Object.prototype.toString.call(obj).slice(8, -1);
+    };
+
+    var extend = function(fn, args){
+        var result = fn.call(this, ...args);
+        if( result instanceof Array && !(result instanceof Series) )
+            return new Series(result);
+        return result;
     };
 
     var Promote = function(a, d){
@@ -55,27 +60,60 @@
 
     var BaseSeries = function BaseSeries() {
         var self = this;
-        var series = [];
+        var series = [];//Object.create( Array.prototype );
         var args = (arguments[0] instanceof Array) ? arguments[0] : arguments;
 
         series.push.apply(series, args);
         Object.setPrototypeOf(series, BaseSeries.prototype);
+
         return series;
     };
-    BaseSeries.prototype = Array.prototype;
-    BaseSeries.prototype.constructor = BaseSeries;
+    BaseSeries.prototype = new Array();
 
     var Series = function Series(){
-        var args = (arguments[0] instanceof Array) ? arguments[0] : arguments;
-        var series = new BaseSeries(args);
+        var series,
+            self = this;
+        //var args = (arguments[0] instanceof Array) ? arguments[0] : arguments;
+        //var keys = Object.getOwnPropertyNames(Array.prototype);
+        series = new BaseSeries(arguments[0]);
 
         Object.setPrototypeOf(series, Series.prototype);
+        //proto = Object.getPrototypeOf(series);
+
         return series;
     };
 
     Series.prototype = BaseSeries.prototype;
     Series.prototype.constructor = Series;
     Series.prototype.toString = function(){return '[object Series]';};
+
+    /* Brute force extend array methods */
+    Series.prototype.concat      = function(){ return extend.call(this, Array.prototype.concat, arguments);};
+    Series.prototype.copyWithin  = function(){ return extend.call(this, Array.prototype.copyWithin, arguments);};
+    Series.prototype.entries     = function(){ return extend.call(this, Array.prototype.entries, arguments);};
+    Series.prototype.every       = function(){ return extend.call(this, Array.prototype.every, arguments);};
+    Series.prototype.fill        = function(){ return extend.call(this, Array.prototype.fill, arguments);};
+    Series.prototype.filter      = function(){ return extend.call(this, Array.prototype.filter, arguments);};
+    Series.prototype.find        = function(){ return extend.call(this, Array.prototype.find, arguments);};
+    Series.prototype.findIndex   = function(){ return extend.call(this, Array.prototype.findIndex, arguments);};
+    Series.prototype.forEach     = function(){ return extend.call(this, Array.prototype.forEach, arguments);};
+    Series.prototype.includes    = function(){ return extend.call(this, Array.prototype.includes, arguments);};
+    Series.prototype.indexOf     = function(){ return extend.call(this, Array.prototype.indexOf, arguments);};
+    Series.prototype.join        = function(){ return extend.call(this, Array.prototype.join, arguments);};
+    Series.prototype.keys        = function(){ return extend.call(this, Array.prototype.keys, arguments);};
+    Series.prototype.lastIndexOf = function(){ return extend.call(this, Array.prototype.lastIndexOf, arguments);};
+    Series.prototype.map         = function(){ return extend.call(this, Array.prototype.map, arguments);};
+    Series.prototype.pop         = function(){ return extend.call(this, Array.prototype.pop, arguments);};
+    Series.prototype.push        = function(){ return extend.call(this, Array.prototype.push, arguments);};
+    Series.prototype.reduce      = function(){ return extend.call(this, Array.prototype.reduce, arguments);};
+    Series.prototype.reduceRight = function(){ return extend.call(this, Array.prototype.reduceRight, arguments);};
+    Series.prototype.reverse     = function(){ return extend.call(this, Array.prototype.reverse, arguments);};
+    Series.prototype.shift       = function(){ return extend.call(this, Array.prototype.shift, arguments);};
+    Series.prototype.slice       = function(){ return extend.call(this, Array.prototype.slice, arguments);};
+    Series.prototype.some        = function(){ return extend.call(this, Array.prototype.some, arguments);};
+    Series.prototype.sort        = function(){ return extend.call(this, Array.prototype.sort, arguments);};
+    Series.prototype.splice      = function(){ return extend.call(this, Array.prototype.splice, arguments);};
+    Series.prototype.unshift     = function(){ return extend.call(this, Array.prototype.unshift, arguments);};
 
     Series.from = function(array){
         return new Series(array);
@@ -264,7 +302,7 @@
         return selected;
     };
 
-    Series.prototype.fill = function(condition, fill){
+    Series.prototype.fillin = function(condition, fill){
         /*deal with NaN behavior*/
         var parts, left, right, lambda,
 
@@ -923,6 +961,5 @@
     };
 
     scope.Series = Series;
-    //scope.BaseSeries = BaseSeries;
 
 }).call(this, window);
