@@ -1,0 +1,7 @@
+{
+    "columns" : ["id", "name", "species", "skill"],
+    "rows" : [
+    	[0, "bonk", "dog", "bark"],
+    	[1, "mittens", "cat", "meow"]
+    ]
+}

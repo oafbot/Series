@@ -54,14 +54,13 @@
         this.message = message;
         this.code = 1;
         this.name = !name ? 'SeriesDataException' : name;
-        console.error(this.message);
+        console.error(this.name +": "+ this.message);
     };
     SeriesDataException.prototype = new Error();
 
-    var BaseSeries = function BaseSeries() {
-        var self = this;
-        var series = [];//Object.create( Array.prototype );
-        var args = (arguments[0] instanceof Array) ? arguments[0] : arguments;
+    var BaseSeries = function BaseSeries(){
+        var args   = (arguments[0] instanceof Array) ? arguments[0] : arguments,
+            series = [];
 
         series.push.apply(series, args);
         Object.setPrototypeOf(series, BaseSeries.prototype);
@@ -71,52 +70,110 @@
     BaseSeries.prototype = new Array();
 
     var Series = function Series(){
-        var series,
-            self = this;
-        //var args = (arguments[0] instanceof Array) ? arguments[0] : arguments;
-        //var keys = Object.getOwnPropertyNames(Array.prototype);
-        series = new BaseSeries(arguments[0]);
+        var series;
 
+        series = new BaseSeries(arguments[0]);
         Object.setPrototypeOf(series, Series.prototype);
-        //proto = Object.getPrototypeOf(series);
 
         return series;
     };
 
-    Series.prototype = BaseSeries.prototype;
+    Series.prototype = new Series();
     Series.prototype.constructor = Series;
     Series.prototype.toString = function(){return '[object Series]';};
 
     /* Brute force extend array methods */
-    Series.prototype.concat      = function(){ return extend.call(this, Array.prototype.concat, arguments);};
-    Series.prototype.copyWithin  = function(){ return extend.call(this, Array.prototype.copyWithin, arguments);};
-    Series.prototype.entries     = function(){ return extend.call(this, Array.prototype.entries, arguments);};
-    Series.prototype.every       = function(){ return extend.call(this, Array.prototype.every, arguments);};
-    Series.prototype.fill        = function(){ return extend.call(this, Array.prototype.fill, arguments);};
-    Series.prototype.filter      = function(){ return extend.call(this, Array.prototype.filter, arguments);};
-    Series.prototype.find        = function(){ return extend.call(this, Array.prototype.find, arguments);};
-    Series.prototype.findIndex   = function(){ return extend.call(this, Array.prototype.findIndex, arguments);};
-    Series.prototype.forEach     = function(){ return extend.call(this, Array.prototype.forEach, arguments);};
-    Series.prototype.includes    = function(){ return extend.call(this, Array.prototype.includes, arguments);};
-    Series.prototype.indexOf     = function(){ return extend.call(this, Array.prototype.indexOf, arguments);};
-    Series.prototype.join        = function(){ return extend.call(this, Array.prototype.join, arguments);};
-    Series.prototype.keys        = function(){ return extend.call(this, Array.prototype.keys, arguments);};
-    Series.prototype.lastIndexOf = function(){ return extend.call(this, Array.prototype.lastIndexOf, arguments);};
-    Series.prototype.map         = function(){ return extend.call(this, Array.prototype.map, arguments);};
-    Series.prototype.pop         = function(){ return extend.call(this, Array.prototype.pop, arguments);};
-    Series.prototype.push        = function(){ return extend.call(this, Array.prototype.push, arguments);};
-    Series.prototype.reduce      = function(){ return extend.call(this, Array.prototype.reduce, arguments);};
-    Series.prototype.reduceRight = function(){ return extend.call(this, Array.prototype.reduceRight, arguments);};
-    Series.prototype.reverse     = function(){ return extend.call(this, Array.prototype.reverse, arguments);};
-    Series.prototype.shift       = function(){ return extend.call(this, Array.prototype.shift, arguments);};
-    Series.prototype.slice       = function(){ return extend.call(this, Array.prototype.slice, arguments);};
-    Series.prototype.some        = function(){ return extend.call(this, Array.prototype.some, arguments);};
-    Series.prototype.sort        = function(){ return extend.call(this, Array.prototype.sort, arguments);};
-    Series.prototype.splice      = function(){ return extend.call(this, Array.prototype.splice, arguments);};
-    Series.prototype.unshift     = function(){ return extend.call(this, Array.prototype.unshift, arguments);};
+    Series.prototype.concat      = function(){ return extend.call(this, Array.prototype.concat,      arguments); };
+    Series.prototype.copyWithin  = function(){ return extend.call(this, Array.prototype.copyWithin,  arguments); };
+    Series.prototype.entries     = function(){ return extend.call(this, Array.prototype.entries,     arguments); };
+    Series.prototype.every       = function(){ return extend.call(this, Array.prototype.every,       arguments); };
+    Series.prototype.fill        = function(){ return extend.call(this, Array.prototype.fill,        arguments); };
+    Series.prototype.filter      = function(){ return extend.call(this, Array.prototype.filter,      arguments); };
+    Series.prototype.find        = function(){ return extend.call(this, Array.prototype.find,        arguments); };
+    Series.prototype.findIndex   = function(){ return extend.call(this, Array.prototype.findIndex,   arguments); };
+    Series.prototype.forEach     = function(){ return extend.call(this, Array.prototype.forEach,     arguments); };
+    Series.prototype.includes    = function(){ return extend.call(this, Array.prototype.includes,    arguments); };
+    Series.prototype.indexOf     = function(){ return extend.call(this, Array.prototype.indexOf,     arguments); };
+    Series.prototype.join        = function(){ return extend.call(this, Array.prototype.join,        arguments); };
+    Series.prototype.keys        = function(){ return extend.call(this, Array.prototype.keys,        arguments); };
+    Series.prototype.lastIndexOf = function(){ return extend.call(this, Array.prototype.lastIndexOf, arguments); };
+    Series.prototype.map         = function(){ return extend.call(this, Array.prototype.map,         arguments); };
+    Series.prototype.pop         = function(){ return extend.call(this, Array.prototype.pop,         arguments); };
+    Series.prototype.push        = function(){ return extend.call(this, Array.prototype.push,        arguments); };
+    Series.prototype.reduce      = function(){ return extend.call(this, Array.prototype.reduce,      arguments); };
+    Series.prototype.reduceRight = function(){ return extend.call(this, Array.prototype.reduceRight, arguments); };
+    Series.prototype.reverse     = function(){ return extend.call(this, Array.prototype.reverse,     arguments); };
+    Series.prototype.shift       = function(){ return extend.call(this, Array.prototype.shift,       arguments); };
+    Series.prototype.slice       = function(){ return extend.call(this, Array.prototype.slice,       arguments); };
+    Series.prototype.some        = function(){ return extend.call(this, Array.prototype.some,        arguments); };
+    Series.prototype.sort        = function(){ return extend.call(this, Array.prototype.sort,        arguments); };
+    Series.prototype.splice      = function(){ return extend.call(this, Array.prototype.splice,      arguments); };
+    Series.prototype.unshift     = function(){ return extend.call(this, Array.prototype.unshift,     arguments); };
 
-    Series.from = function(array){
-        return new Series(array);
+    Series.from = function(data, assign){
+        if(data instanceof Array)
+            return new Series(data);
+        else if(typeof data=='string'){
+            if(data.indexOf("/")>-1 || data.indexOf(".")>-1){
+                return Series.json.load(data, assign);
+            }
+            return Series.from(JSON.parse(data));
+        }
+        else if(typeof data=='object'){
+            var series = [];
+            var columns = data.hasOwnProperty('columns') ? data.columns : (function(){
+                    var max = 0;
+                    for(var i=0; i<data.rows.length; i++)
+                        max = (data.rows[i].length > max) ? data.rows[i].length : max;
+                    return Array.apply(null, Array(max)).map(function(e, i) {return i;});
+                })();
+
+            for(var i=0; i<data.rows.length; i++){
+                var row = {};
+                for(var c=0; c<columns.length; c++)
+                    row[columns[c]] = data.rows[i][c];
+                series.push(row);
+            }
+            return new Series(series);
+        }
+    };
+
+    Series.json = {
+        load : function(url, assign){
+            return Series.load(url, function(text){
+                scope[assign] = Series.from(JSON.parse(text));
+            } );
+        },
+        dump : function(series){
+            return JSON.stringify(series);
+        }
+    };
+
+    Series.load = function(url, fn){
+        var xhttp = new XMLHttpRequest();
+        xhttp.onreadystatechange = function(){ if(this.readyState==4 && this.status==200) fn(this.responseText); };
+        xhttp.open("GET", url, true);
+        xhttp.send();
+    };
+
+    Series.export = function(series, format){
+        var exported;
+        format = (format===undefined) ? 'object' : format;
+
+        switch(format){
+            case 'object':
+                exported = { columns : series.columns(), rows : [] };
+                series.forEach(function(row){ exported.rows.push(Object.values(row)); });
+                break;
+            case 'array':
+                exported = [ series.columns(), [] ];
+                series.forEach(function(row){ exported[1].push(Object.values(row)); });
+                break;
+            case 'json':
+                exported = Series.json.dump(series);
+                break;
+        }
+        return exported;
     };
 
     Series.prototype.typeof = function(){
@@ -131,7 +188,7 @@
         return false;
     };
 
-    Series.prototype.groupby = function(key) {
+    Series.prototype.groupby = function(key){
       return this.reduce(function(rv, x) {
         (rv[x[key]] = rv[x[key]] || Series.from([])).push(x);
         return rv;
@@ -218,11 +275,12 @@
                 for(c=0; c<cols.length; c++)
                     this[row][cols[c]] = table[row][cols[c]];
             }
+            proto._columns = cols;
         }
     };
 
-    Series.prototype.equal = function(b){
-        var a = this;
+    Series.prototype.equal = function(b, a){
+        a = (a===undefined) ? this : a;
         if (a === b) return true;
         if (a == null || b == null) return false;
         if (a.length != b.length)   return false;
@@ -238,12 +296,12 @@
     };
 
     Series.prototype.top = function(limit){
-        limit = limit===undefined ? 10 : limit;
+        limit = limit===undefined ? this.length>5 ? 5 : 1 : limit;
         return this.slice(0, limit);
     };
 
     Series.prototype.last = function(limit){
-        limit = limit===undefined ? 11 : limit+1;
+        limit = limit===undefined ? this.length>5 ? 6 : 2 : limit+1;
         return this.slice(this.length-limit, this.length-1);
     };
 
@@ -701,6 +759,13 @@
         else try{throw new SeriesDataException('Cannot evaluate statement. Malformed syntax.');}catch(e){}
     };
 
+    Series.prototype.get = function(){
+        var selected = this.where(...arguments);
+        if(selected.length>1)
+            try{ throw SeriesDataException("Multiple entries were found for the given query.", "Parameter Error", 3); }catch(e){}
+        return selected[0];
+    };
+
     Series.prototype.merge = function(){
         var s1,
             s2,
@@ -936,6 +1001,42 @@
                 }
             return row;
         });
+    };
+
+    Series.prototype.col = Series.prototype.getprop('col', function(){
+        var self = this;
+        return new Proxy(self, {
+            get: function(target, name){
+                if(!target.hasOwnProperty(name))
+                    Object.defineProperty(target, name, {
+                        get: function(){return target.column(name);},
+                        configurable: true
+                    });
+                return target[name];
+            },
+            set: function(target, name, value){
+                if(value instanceof Series){
+                    target = target.map(function(row, index){row[name] = value[index]; return row;});
+                }
+                if(value instanceof Function){
+                    target = target.map(function(row, index, array){ row[name] = value(row[name], row, index, array); return row; });
+                }
+                else{
+                    target = target.map(function(row){row[name] = value; return row;});
+                }
+            },
+        });
+    });
+
+    Series.prototype.row = function(){
+        if(arguments.length>1){
+            return this.range(arguments[0], arguments[1]);
+        }
+        else{
+            if(typeof arguments[0]=='string')
+                return this.indexOf(arguments[0]);
+            return this[arguments[0]];
+        }
     };
 
     Series.prototype.show = function(){

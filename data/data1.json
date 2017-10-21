@@ -1,0 +1,4 @@
+[
+	{"name" :"bonk", "species":"dog", "skill":"bark", "id":0},
+	{"name" :"mittens", "species":"cat", "skill":"meow", "id":1}
+]
