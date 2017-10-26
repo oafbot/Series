@@ -100,33 +100,25 @@
         var series, row, columns, self;
         self = this;
         series = new BaseSeries(arguments[0]);
+
         Object.setPrototypeOf(series, Series.prototype);
+        //Object.setPrototypeOf(series, proxy);
+        row = series[0];
+        //var proto = Object.getPrototypeOf(series);
+        //Object.setPrototypeOf(series, proto);
+        // check = series.every(function(row){
+        //     if(series.hasOwnProperty(row)) //&& row!==undefined )
+        //         return row instanceof Object && !(row instanceof Series);
+        //     //return true;
+        // });
+        //check2 = series.every(function(row){ return !(row instanceof Series); });
 
-        // if(!arguments[0].constructor.prototype._columns){
-        //     row = series[0];
-        //     var proto = Object.create(Object.getPrototypeOf(series));
-        //     Object.setPrototypeOf(series, proto);
-        //     if(row instanceof Object && !(row instanceof Series)){
-        //         columns = Object.keys(row);
-        //         columns.forEach(function(col){
-        //             var column = {};
-
-        //             column[Symbol.iterator] = function*(){
-        //                 console.log(self);
-        //                 for(var i=0; i<series.length; i++){
-        //                     yield  (self instanceof Series && self.length) ? self[i][col] :  series[i][col];
-        //                 }
-        //             };
-
-        //             if(!proto.hasOwnProperty(col))
-        //                 proto[col] = Series.from([...column]);
-
-        //             //if(series.indexOf(col)<0)
-        //             //    series[col] = series.getprop(col, function(){ return this.column(col); });
-        //                 //function(value){ return this.map(function(row){row[col] = value; }); }
-        //         });
-        //     }
-        // }
+        if( row instanceof Object && !(row instanceof Series) ){
+            columns = series.columns();
+            columns.forEach(function(col){
+                series.col[col];
+            });
+        }
         return series;
     };
 
@@ -568,10 +560,7 @@
             _columns = Series.from([]);
 
             for(var i=0; i<this.length; i++)
-                if(this[i]){
-                    console.log(this[i])
-                    _columns = _columns.concat(Object.keys(this[i]));
-                }
+                _columns = _columns.concat(this[i]!==null && this[i]!==undefined ? Object.keys(this[i]) : this[i]);
 
             _columns = _columns.unique();
             return _columns;
@@ -1364,7 +1353,6 @@
             columns = target.columns(); //Object.keys(row);
             columns.forEach(function(col){
                 var column = factory(col);
-                //console.log(target)
                 if(value)
                     target.map(function(row, index){ row[name] = value[index]; return row; });
             });
