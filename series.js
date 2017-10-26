@@ -1,5 +1,7 @@
 (function(global){
     var scope = this;
+    var environment = typeof window=='undefined' ? 'server' : 'browser';
+    var exports     = typeof module!='undefined' ? module.exports : {};
 
     var istype = function(obj){
         if(obj===null)
@@ -9,11 +11,36 @@
         return Object.prototype.toString.call(obj).slice(8, -1);
     };
 
+    var colnums = function(data){
+        var max = 0;
+        for(var i=0; i<data.length; i++)
+            max = (data[i].length > max) ? data[i].length : max;
+        return Array.apply(null, Array(max)).map(function(e, i) {return i;});
+    };
+
     var extend = function(fn, args){
         var result = fn.call(this, ...args);
         if( result instanceof Array && !(result instanceof Series) )
-            return new Series(result);
+            return Series(result);
         return result;
+    };
+
+    var namespace = function(path){
+        var i,
+            spaces  = path.split("."),
+            context = spaces[0]=='global' || spaces[0]=='window' ? global : scope,
+            name    = spaces.pop();
+
+        for(i=0; i<spaces.length; i++){
+            if(spaces[i]!==""){
+                if(typeof context[spaces[i]]==='undefined')
+                   context[spaces[i]] = {};
+                context = context[spaces[i]];
+            }
+        }
+        //if(context===global)
+        //    throw new ReferenceError("Invalid parameter for variable assignment.");
+        return {path:context, name:name};
     };
 
     var Promote = function(a, d){
@@ -70,15 +97,40 @@
     BaseSeries.prototype = new Array();
 
     var Series = function Series(){
-        var series;
-
+        var series, row, columns, self;
+        self = this;
         series = new BaseSeries(arguments[0]);
         Object.setPrototypeOf(series, Series.prototype);
 
+        // if(!arguments[0].constructor.prototype._columns){
+        //     row = series[0];
+        //     var proto = Object.create(Object.getPrototypeOf(series));
+        //     Object.setPrototypeOf(series, proto);
+        //     if(row instanceof Object && !(row instanceof Series)){
+        //         columns = Object.keys(row);
+        //         columns.forEach(function(col){
+        //             var column = {};
+
+        //             column[Symbol.iterator] = function*(){
+        //                 console.log(self);
+        //                 for(var i=0; i<series.length; i++){
+        //                     yield  (self instanceof Series && self.length) ? self[i][col] :  series[i][col];
+        //                 }
+        //             };
+
+        //             if(!proto.hasOwnProperty(col))
+        //                 proto[col] = Series.from([...column]);
+
+        //             //if(series.indexOf(col)<0)
+        //             //    series[col] = series.getprop(col, function(){ return this.column(col); });
+        //                 //function(value){ return this.map(function(row){row[col] = value; }); }
+        //         });
+        //     }
+        // }
         return series;
     };
 
-    Series.prototype = new Series();
+    Series.prototype = BaseSeries.prototype;
     Series.prototype.constructor = Series;
     Series.prototype.toString = function(){return '[object Series]';};
 
@@ -110,23 +162,49 @@
     Series.prototype.splice      = function(){ return extend.call(this, Array.prototype.splice,      arguments); };
     Series.prototype.unshift     = function(){ return extend.call(this, Array.prototype.unshift,     arguments); };
 
-    Series.from = function(data, assign){
-        if(data instanceof Array)
+    Series.from = function(data, done){
+        var series, columns, rows, check;
+
+        if(data instanceof Array){
+            check = function(data){
+                return data.length==2 && (data[1] instanceof Array || data[1] instanceof Series) && data[1].every(function(row){
+                    return row instanceof Array || row instanceof Series });
+            };
+
+            if(check(data)){
+                series  = [];
+                columns = data.length == 2 ? data[0] : colnums(data[1]);
+                rows    = data[1];
+
+                data[1].forEach(function(values){
+                    var row = {};
+                    series.push((function(){
+                        columns.forEach( function(col, index){ row[col] = values[index]; } );
+                        return row;
+                    })());
+                });
+                return new Series(series);
+            }
             return new Series(data);
+        }
         else if(typeof data=='string'){
-            if(data.indexOf("/")>-1 || data.indexOf(".")>-1){
-                return Series.json.load(data, assign);
+            if(data.split('.').pop()=='csv'){
+                return Series.csv.load(data, done);
+            }
+            else if( data.split('.').pop()=='json' ||
+                   ( data.indexOf("\n")<0 && ( /\/$/.test(data) || /^[\/\.a-zA-Z0-9]+$/.test(data) ))){
+                return Series.json.load(data, done);
+            }
+            else if(
+                data.charAt(0)!="{" && data.charAt(0)!="[" &&
+                /^(\"?[a-zA-Z0-9]\"?)+(,\s*\"?[a-zA-Z0-9]\"?)+/.test(data)){
+                return Series.csv.parse(data);
             }
             return Series.from(JSON.parse(data));
         }
         else if(typeof data=='object'){
-            var series = [];
-            var columns = data.hasOwnProperty('columns') ? data.columns : (function(){
-                    var max = 0;
-                    for(var i=0; i<data.rows.length; i++)
-                        max = (data.rows[i].length > max) ? data.rows[i].length : max;
-                    return Array.apply(null, Array(max)).map(function(e, i) {return i;});
-                })();
+            series = [];
+            columns = data.hasOwnProperty('columns') ? data.columns : colnums(data.rows);
 
             for(var i=0; i<data.rows.length; i++){
                 var row = {};
@@ -138,22 +216,136 @@
         }
     };
 
+    Series.csv = {
+        load : function(url, done){
+            var ns;
+            if(typeof done=='string' || done instanceof String)
+                Series.load(url, function(text){
+                    ns = namespace(done);
+                    ns.path[ns.name] = Series.from(Series.csv.parse(text));
+                }, done);
+            else if(typeof done=='function')
+                Series.load(url, done);
+            return "parsing...";
+        },
+        parse : function(text){
+            var lines,
+                columns,
+                data = [];
+
+            lines   = text.match(/[^\r\n]+/g);
+            columns = lines.shift().split(/,\s*/);
+
+            lines.forEach(function(line){
+                var row = {};
+                var parts = line.split(/,\s*/).map(function(item){return item.trim();});
+                parts.forEach(function(value, index){
+                    if(value=="true")
+                        value = true;
+                    else if(value=="false")
+                        value = false;
+                    else if(!isNaN(value))
+                        value = parseFloat(value);
+                    else if(value=="null")
+                        value = null;
+                    else if(value=="undefined")
+                        value = undefined;
+                    else if(value=="NaN")
+                        value = NaN;
+                    else if(value.charAt(0)=='"' && value.charAt(value.length-1)=='"')
+                        value = value.replace(/\"/g, "");
+
+                    row[columns[index]] = value;
+                });
+                data.push(row);
+            });
+            return Series.from(data);
+        },
+        dump : function(series){
+            var exported = series.columns().join(", ") + "\n";
+            series.forEach(function(row){ exported += Object.values(row).map(function(item, index){
+                if(typeof item=='string' || item instanceof String)
+                    item = '"' + item + '"';
+                else if(item===null || item===undefined)
+                    item = String(item);
+
+                if(index==Object.values(row).length-1)
+                    item += "\n";
+                return item;
+            }).join(", "); });
+            return exported;
+        }
+    };
+
     Series.json = {
-        load : function(url, assign){
-            return Series.load(url, function(text){
-                scope[assign] = Series.from(JSON.parse(text));
-            } );
+        load : function(url, done){
+            var ns;
+            if(typeof done=='string' || done instanceof String)
+                Series.load(url, function(text){
+                    ns = namespace(done);
+                    ns.path[ns.name] = Series.from(JSON.parse(text));
+                }, done);
+            else if(typeof done=='function')
+                Series.load(url, done);
+            return "parsing...";
         },
         dump : function(series){
             return JSON.stringify(series);
         }
     };
 
-    Series.load = function(url, fn){
-        var xhttp = new XMLHttpRequest();
-        xhttp.onreadystatechange = function(){ if(this.readyState==4 && this.status==200) fn(this.responseText); };
-        xhttp.open("GET", url, true);
-        xhttp.send();
+    Series.load = function(url, fn, name){
+        var promise,
+            xhttp,
+            resolve = fn,
+            reject = console.trace,
+            status = true;
+
+        function ajax(){
+            var color1 = environment!='server' ? ['color: #DA5486', 'color: #000000'] : ["", ""];
+            var color2 = environment!='server' ? ['color: #4BA8DA', 'color: #000000'] : ["", ""];
+
+            return new Promise(function(resolve, reject){
+                xhttp = new XMLHttpRequest();
+                xhttp.onreadystatechange = function(){
+                    if(this.readyState==4){
+                        if(this.status==200){
+                            console.info("Resource loaded as: %c\"" + name + "\"%c", ...color1);
+                            resolve(this.responseText);
+                        }
+                        else reject(this.status, this.statusText);
+                    }
+                    else if(status) console.info("Importing: %c\"" + url +"\"%c", ...color2);
+                    status = false;
+                };
+                xhttp.open("GET", url, true);
+                xhttp.send();
+            });
+        }
+
+        if(environment=='server'){
+            if(!/^http|ftp/.test(url)){
+                try{
+                    var fs = require('fs');
+                    fs.readFile( __dirname + "/" + url, function(error, data){
+                        if(error)
+                            throw error;
+                        console.log("Resource loaded in module.exports as: \"" + name + "\"");
+                        return fn(data.toString());
+                    });
+                }
+                catch(e){ console.trace(); }
+            }
+            else{
+                XMLHttpRequest = require('xhr2');
+                promise = ajax();
+                return promise.then(resolve, reject);
+            }
+        }
+        else{
+            promise = ajax();
+            return promise.then(resolve, reject);
+        }
     };
 
     Series.export = function(series, format){
@@ -172,9 +364,126 @@
             case 'json':
                 exported = Series.json.dump(series);
                 break;
+            case 'csv':
+                exported = Series.csv.dump(series);
         }
         return exported;
     };
+
+    Series.empty = function(num){
+        var empty = function(n){ return new Array(n).fill({}); };
+        return new Series(empty(num));
+    };
+
+    Series.prototype.getprop = (function(prop, getter, setter){
+        Object.defineProperty(Series.prototype, prop, {
+            get: getter,
+            set: setter===undefined ?
+                 function( ){ prop = this.getprop.call(this); } :
+                 function(v){ prop = setter.call(this, v); },
+            configurable: true
+        });
+    }).bind(Series.prototype);
+
+    var is = function is(series){ this.series = series; };
+    var to = function to(series){ this.series = series; };
+
+    is.prototype = new is(Series.prototype);
+    to.prototype = new to(Series.prototype);
+
+    is.prototype.boolean = function(col){
+        var i, char, check;
+
+        check = function(item){ return typeof item=='boolean' || item instanceof Boolean; };
+
+        if(col!==undefined)
+            return this.series.every(function(row){ return check(row[col]); });
+        return this.series.every(function(row){ return check(row); });
+    };
+
+    is.prototype.numeric = function(col){
+        if(col!==undefined){
+            return this.series.filter(function(row){
+                return !isNaN(parseFloat(row[col])) && isFinite(row[col]);
+            }).length > 0;
+        }
+        else{
+            return this.series.every(function(row){return !isNaN(parseFloat(row)) && isFinite(row);});
+        }
+    };
+
+    is.prototype.string = function(col){
+        var i, char, check;
+
+        check = function(item){ return typeof item=='string' || item instanceof String; };
+
+        if(col!==undefined)
+            return this.series.every(function(row){ return check(row[col]); });
+        return this.series.every(function(row){ return check(row); });
+    };
+
+    is.prototype.alphanumeric = function(col){
+        var i, char, check;
+
+        check = function(item){
+            if(typeof item=='number' || item instanceof Number)
+                return true;
+            else if(typeof item=='string' || item instanceof String){
+                for(i=0; i<item.length; i++){
+                    char = item.charCodeAt(i);
+                    if(!(char > 47 && char < 58) && // (0-9)
+                       !(char > 64 && char < 91) && // (A-Z)
+                       !(char > 96 && char < 123))  // (a-z)
+                       return false;
+                }
+                return true;
+            }
+            return false;
+        };
+
+        if(col!==undefined)
+            return this.series.every(function(row){ return check(row[col]); });
+        return this.series.every(function(row){ return check(row); });
+    };
+
+    is.prototype.empty = function(col){
+        var i, char, check;
+
+        check = function(item){
+            return(
+                item===null      ||
+                item===undefined ||
+                ( /^\s*$/.test(item) && (typeof item=='string' || item instanceof String )) ||
+                ( isNaN(item) && (typeof item=='number'        || item instanceof Number )) ||
+                ( item.length<1 && (item instanceof Array      || item instanceof Series )) ||
+                ( Object.keys(item).length===0 && item.constructor===Object              ));
+        };
+
+        if(col!==undefined)
+            return this.series.every(function(row){ return check(row[col]); });
+        return this.series.every(function(row){ return check(row); });
+    };
+
+    to.prototype.string = function(col){
+        if(col!==undefined)
+            return this.series.map(function(row){ row[col] = String(row[col]); return row;});
+        return this.series.map(function(item){ item = String(item); return item;});
+    };
+
+    to.prototype.number = function(col){
+        if(col!==undefined)
+            return this.series.map(function(row){ row[col] = Number(row[col]); return row;});
+        return this.series.map(function(item){ item = Number(item); return item;});
+    };
+
+    to.prototype.boolean = function(col){
+        if(col!==undefined)
+            return this.series.map(function(row){ row[col] = Boolean(row[col]); return row;});
+        return this.series.map(function(item){ item = Boolean(item); return item;});
+    };
+
+    Series.prototype.is = Series.prototype.getprop('is', function(){ return new is(this); });
+    Series.prototype.to = Series.prototype.getprop('to', function(){ return new to(this); });
 
     Series.prototype.typeof = function(){
         if(arguments.length<1)
@@ -205,11 +514,11 @@
         return this;
     };
 
-    Series.prototype.clone = function(){
+    Series.prototype.copy = function(){
         return this.slice(0);
     };
 
-    Series.prototype.deepcopy = function(){
+    Series.prototype.clone = function(){
         return this.map(function(a){return Object.assign({}, a);});
     };
 
@@ -254,14 +563,18 @@
 
     Series.prototype.columns = function(cols){
         var proto = Object.getPrototypeOf(this);
+        var _columns;
         if(cols===undefined){
-            proto._columns = Series.from([]);
+            _columns = Series.from([]);
 
             for(var i=0; i<this.length; i++)
-                proto._columns = proto._columns.concat(Object.keys(this[i]));
+                if(this[i]){
+                    console.log(this[i])
+                    _columns = _columns.concat(Object.keys(this[i]));
+                }
 
-            proto._columns = proto._columns.unique();
-            return proto._columns;
+            _columns = _columns.unique();
+            return _columns;
         }
         else{
             var c, row;
@@ -275,7 +588,7 @@
                 for(c=0; c<cols.length; c++)
                     this[row][cols[c]] = table[row][cols[c]];
             }
-            proto._columns = cols;
+            //_columns = cols;
         }
     };
 
@@ -311,11 +624,23 @@
     };
 
     Series.prototype.min = function(c){
-        return Math.min.apply(null, this.column(c));
+        var series = c!==undefined ? this.column(c) : this;
+        return Math.min.apply(null, series);
     };
 
     Series.prototype.max = function(c){
-        return Math.max.apply(null, this.column(c));
+        var series = c!==undefined ? this.column(c) : this;
+        return Math.max.apply(null, series);
+    };
+
+    Series.prototype.longest = function(c){
+        var series = c!==undefined ? this.column(c) : this;
+        return series.sort(function(a, b){ return String(a).length - String(b).length; })[series.length-1];
+    };
+
+    Series.prototype.shortest = function(c){
+        var series = c!==undefined ? this.column(c) : this;
+        return series.sort(function(a, b){ return String(a).length - String(b).length; })[0];
     };
 
     Series.prototype.avg = function(c){
@@ -323,13 +648,38 @@
     };
 
     Series.prototype.sum = function(c){
-        return this.column(c).reduce(function(a, b) { return a + b; });
+        var series = c!==undefined ? this.column(c) : this;
+        return series.reduce(function(a, b) { return a + b; });
     };
 
-    Series.prototype.isNumeric = function(col){
-        return this.filter(function(row){
-            return !isNaN(parseFloat(row[col])) && isFinite(row[col]);
-        }).length > 0;
+    Series.prototype.stdev = function(c){
+        var series, avg, sqdiff;
+
+        series = c!==undefined ? this.col[c] : this;
+
+        avg = series.avg();
+        sqdiff = series.map(function(value){ return (value - avg) * (value - avg); });
+
+        return Math.sqrt( sqdiff.avg() );
+    };
+
+    Series.prototype.median = function(c){
+        var series, lo, hi;
+
+        series = c===undefined ? this : this.col[c];
+        series.sort( function(a, b){ return a - b; } );
+
+        lo = Math.floor( (series.length - 1) / 2 );
+        hi = Math.ceil(  (series.length - 1) / 2 );
+
+        return (series[lo] + series[hi]) / 2;
+    };
+
+    Series.prototype.apply = function(lambda){
+        var self = this;
+        return self.map(function(row, index, series){
+            return lambda.call(self, row, index, series);
+        });
     };
 
     Series.prototype.rename = function(o, n){
@@ -360,7 +710,7 @@
         return selected;
     };
 
-    Series.prototype.fillin = function(condition, fill){
+    Series.prototype.fill = function(condition, fill){
         /*deal with NaN behavior*/
         var parts, left, right, lambda,
 
@@ -469,14 +819,6 @@
     Series.prototype.null = function(fill){
         return this.fill('* = null', fill);
     };
-
-    Series.prototype.getprop = (function(prop, getter){
-        Object.defineProperty(Series.prototype, prop, {
-            get: getter,
-            set: function(){prop = this.getprop.call(this);},
-            configurable: true
-        });
-    }).bind(Series.prototype);
 
     Series.prototype.count = Series.prototype.getprop('count', function(){return this.length;});
 
@@ -874,8 +1216,8 @@
                 matches,
                 intersect;
 
-            left  = s1.deepcopy();
-            right = s2.deepcopy();
+            left  = s1.clone();
+            right = s2.clone();
 
             if(join=='full' || join=='outer'){
                 _resolve_(left, right);
@@ -1004,45 +1346,172 @@
     };
 
     Series.prototype.col = Series.prototype.getprop('col', function(){
-        var self = this;
-        return new Proxy(self, {
+        var series = this;
+        var row = series[0];
+        var proto = Object.create(Object.getPrototypeOf(series));
+        //Object.setPrototypeOf(series, proto);
+        var factory = function(c){
+            var column = {};
+            column[Symbol.iterator] = function*(){
+                for(var i=0; i<series.length; i++){
+                    yield series[i][c];
+                }
+            };
+            return column;
+        };
+
+        var setter = function(target, name, value, receiver){
+            columns = target.columns(); //Object.keys(row);
+            columns.forEach(function(col){
+                var column = factory(col);
+                //console.log(target)
+                if(value)
+                    target.map(function(row, index){ row[name] = value[index]; return row; });
+            });
+        };
+
+        var getter = function(target, name, receiver){
+            //if(row instanceof Object && !(row instanceof Series)){
+                columns = target.columns(); //Object.keys(row);
+                columns.forEach(function(col){
+                    var column = factory(col);
+
+                    if(!target.hasOwnProperty(col))
+                        Series.prototype.getprop(col, function(){
+                            return Series.from([...column]);
+                        }, setter);
+                        target[col] = Series.from([...column]);
+                        //receiver[col] = Series.from([...column]);
+                    //if(series.indexOf(col)<0)
+                    //    series[col] = series.getprop(col, function(){ return this.column(col); });
+                        //function(value){ return this.map(function(row){row[col] = value; }); }
+                });
+                return target[name];
+            // /}
+        };
+
+        return new Proxy(series, { get: getter, set: setter });
+    });
+
+    // Series.prototype.col = Series.prototype.getprop('col', function(){
+    //     var self = this;
+
+    //     var getter = function(target, name, receiver){
+    //         if(!target.hasOwnProperty(name))
+    //             Object.defineProperty(target, name, {
+    //                 get : function(){ target[name] = target.column(name); return target[name]},
+    //                 //set : function(){ target.map(function(row, index){row[name] = target[name][index];return row;}) },
+    //                 configurable : true,
+    //                 enumerable  : true
+    //             });
+    //         //if(!target.hasOwnProperty(name))
+    //         //target[name] = target.column(name);
+    //         return target[name];
+    //         //return target[name];
+    //     };
+
+    //     var setter = function(target, name, value, receiver){
+    //         console.log(receiver)
+    //         if(value instanceof Series || value instanceof Array)
+    //         //var column = Series.from([]);
+    //         // value.forEach(function(item, index){
+    //         //     column.push(item);
+    //         //     self[index][name] = item;
+    //         // });
+    //         //
+    //         //
+    //         target[name] = 
+    //         target.map(function(row, index){
+    //             row[name] = value[index];
+    //             //debugger;
+    //             //Object.assign(row, value[index]);
+    //             //column.push(value[index]);
+    //             return row;
+    //         });
+
+    //         //else if(value instanceof Function)
+    //         //    target.map(function(row, index, array){
+    //         //        row[name] = value(row[name], row, index, array);
+    //         //        return row;
+    //         //    });
+    //         else target[name] = value;//target.map(function(row){row[name] = value; return row;});
+    //         //target[name] = Series.prototype.getprop(name, getter);
+    //         // target[name] = Series.prototype.getprop(name, target.column.bind(target, name));
+    //         //target[name] = column;
+    //     };
+
+    //     return new Proxy(self, { get: getter, set: setter });
+    // });
+
+    Series.prototype.row = function(){
+        var rows,
+            index,
+            indecies = [],
+            self = this;
+
+        if(arguments.length>1){
+            rows = self.range(arguments[0], arguments[1]);
+            for(var i=arguments[0];i<arguments[1]+1; i++)
+                indecies.push(i);
+        }
+        else if(arguments[0] instanceof Array){
+            indecies = arguments[0];
+            rows = this.filter(function(row, index){if(indecies.indexOf(index)>-1) return row; });
+        }
+        else if(typeof arguments[0]=='string'){
+            index = self.indexOf(arguments[0]);
+            rows = (index>-1) ? Series.from([self[index]]) : Series.from([]);
+            indecies.push(index);
+        }
+        else{
+            rows = new Series([ self[arguments[0]] ]);
+            indecies.push(arguments[0]);
+        }
+
+        return new Proxy(rows, {
             get: function(target, name){
-                if(!target.hasOwnProperty(name))
-                    Object.defineProperty(target, name, {
-                        get: function(){return target.column(name);},
-                        configurable: true
-                    });
                 return target[name];
             },
             set: function(target, name, value){
-                if(value instanceof Series){
-                    target = target.map(function(row, index){row[name] = value[index]; return row;});
-                }
-                if(value instanceof Function){
-                    target = target.map(function(row, index, array){ row[name] = value(row[name], row, index, array); return row; });
-                }
-                else{
-                    target = target.map(function(row){row[name] = value; return row;});
-                }
+                self.map(function(row, index, series){
+                    var selected = indecies.indexOf(index);
+
+                    if(selected > -1){
+                        if(value instanceof Series || value instanceof Array)
+                            row[name] = value[selected];
+                        else if(value instanceof Function)
+                            row[name] = value(row[name], row, index, series);
+                        else
+                            row[name] = value;
+                        return row;
+                    }
+                });
             },
         });
-    });
+    };
 
-    Series.prototype.row = function(){
-        if(arguments.length>1){
-            return this.range(arguments[0], arguments[1]);
-        }
-        else{
-            if(typeof arguments[0]=='string')
-                return this.indexOf(arguments[0]);
-            return this[arguments[0]];
-        }
+    Series.prototype.all = function(condition){
+        if(typeof condition=='function')
+            return this.every(function(item){ return condition(item); });
+        return this.every(function(item){ return item==condition; });
+    };
+
+    Series.prototype.entirely = Series.prototype.all;
+
+    Series.prototype.partly = function(condition){
+        if(typeof condition=='function')
+            return this.some(function(item){ return condition(item); });
+        return this.some(function(item){ return item==condition; });
     };
 
     Series.prototype.show = function(){
         var row,
-            table = [],
+            table   = [],
             columns = this.columns();
+
+        if(typeof console.table=='undefined' || environment=='server'){
+            return this.tabular();
+        }
 
         function Row(columns, values){
             for(var c=0; c<columns.length; c++)
@@ -1061,6 +1530,111 @@
         return this;
     };
 
+    Series.prototype.tabular = function(){
+        var hr,
+            row,
+            col,
+            spc,
+            repeat,
+            values,
+            display,
+            wrap    = 40,
+            width   = [],
+            max     = [],
+            table   = [],
+            spacer  = 4,
+            columns = Series.from(['index'].concat(this.columns()));
+            series  = this;
+
+        repeat = function(length, char){
+           return Array(length>0 ? length+1 : 1).join(char!==undefined ? char : " ");
+        };
+
+        render = function(table){
+            table.forEach(function(row, index){
+                if(index===0){
+                    col = "";
+                    spc = [];
+                    hr  = "";
+
+                    columns.forEach(function(value, index){ spc.push( max[index] - String(value).length); });
+                    columns.forEach(function(value, index){
+                        col += value + repeat(spc[index]+spacer);
+                        hr  += repeat(String(value).length, "-") + repeat(spc[index] + spacer);
+                    });
+
+                    console.log(col);
+                    console.log(hr);
+                }
+                console.log(row);
+            });
+            return "count: " + series.count;
+        };
+
+        display = function(series){
+            for(var i=0; i<series.length; i++){
+                row = i + repeat(max[0] - String(i).length + spacer);
+                spc = [];
+                values = Object.values(series[i]);
+
+                values.forEach(function(value, index){ spc.push(max[index+1] - String(value).length); });
+
+                values.forEach(function(value, index){ row += String(value) + repeat(spc[index] + spacer);});
+
+                table.push(row);
+            }
+            return render(table);
+        };
+
+        columns.forEach(function(column, index){
+            values = [];
+            series.forEach(function(row, index){ values.push(column!='index' ? String(row[column]) : String(index)); });
+            max.push(Series.from([column]).concat(values).longest().length);
+            //width.push(Series.from([column]).concat(values).join().length);
+        });
+
+        width = Series.from(max).sum() + spacer * columns.count;
+
+        if(width > wrap){
+            var total   = 0;
+            var cols    = [];
+            var wrapped = [];
+            var segment = Series.empty(series.length);
+
+            max.forEach(function(width, index){
+                var c = columns[index+1];
+                if(total+width+spacer>=wrap){
+                    wrapped.push({columns: cols, rows:segment});
+                    segment = Series.empty(series.length);
+                    segment.col[c] = series.col[c];
+                    cols = [];
+                    total = 0;
+                }
+                else{
+                    cols.push(c);
+                    segment.col[c] = series.col[c];
+                    total += width + spacer;
+                }
+            });
+
+            for(var i=0; i<wrapped.length; i++){
+                console.log(wrapped[i]);
+                columns = wrapped[i].columns;
+                display(wrapped[i].rows);
+            }
+        }
+        else{
+            display(series);
+        }
+    };
+
+    if(environment=='server'){
+        exports.Series = Series;
+        return exports;
+    }
+
     scope.Series = Series;
 
-}).call(this, window);
+    return Series;
+
+}).call(this, typeof window=='undefined' ? global : window);

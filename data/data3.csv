@@ -1,0 +1,9 @@
+id, name, species, skill, eats, habitat, size, vaccinated
+0, "bonk", "dog", "bark", null, "house", "small", true
+1, "mittens", "cat", "meow", null, "house", "small", true
+2, "billy", "goat", "baa", "shrubbery", "farm", "small", false
+3, "snowball", "pig", "oink", "feed", "farm", "small", false
+4, "bazooka", "dog", "bark", "dog food", "farm", "large", true
+5, "leo", "lion", "roar", "meat", "zoo", "large", true
+6, "hugo", "hippo", "lumber", "pizza", "zoo", "large", false
+7, null, null, null, undefined, "outer space", "small", false
