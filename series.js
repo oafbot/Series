@@ -655,8 +655,8 @@
     };
 
     Series.prototype.last = function(limit){
-        limit = limit===undefined ? this.length>5 ? 6 : 2 : limit+1;
-        return this.slice(this.length-limit, this.length-1);
+        limit = limit===undefined ? this.length>5 ? 5 : 1 : limit;
+        return this.slice(this.length-limit, this.length);
     };
 
     Series.prototype.limit = function(limit){
@@ -751,6 +751,7 @@
                     copy[col] = row[col];
             return copy;
         });
+        selected.columns(args);
         return selected;
     };
 
@@ -1440,19 +1441,23 @@
     });
 
     Series.prototype.row = function(){
-        var rows,
+        var num,
+            num2,
+            rows,
             index,
             indecies = [],
             self = this;
 
         if(arguments.length>1){
-            rows = self.range(arguments[0], arguments[1]);
-            for(var i=arguments[0];i<arguments[1]+1; i++)
-                indecies.push(i);
+            indecies = [...arguments];
+            rows = this.filter(function(row, index){if(indecies.indexOf(index)>-1) return row; });
         }
         else if(arguments[0] instanceof Array){
-            indecies = arguments[0];
-            rows = this.filter(function(row, index){if(indecies.indexOf(index)>-1) return row; });
+            num  = arguments[0][0] >= 0 ? arguments[0][0] : self.length + arguments[0][0];
+            num2 = arguments[0][1] >  0 ? arguments[0][1] : self.length + arguments[0][1];
+            rows = self.range(num, num2);
+            for(var i=num;i<num2+1; i++)
+                indecies.push(i);
         }
         else if(typeof arguments[0]=='string'){
             index = self.indexOf(arguments[0]);
@@ -1460,8 +1465,9 @@
             indecies.push(index);
         }
         else{
-            rows = new Series([ self[arguments[0]] ]);
-            indecies.push(arguments[0]);
+            num = arguments[0] >= 0 ? arguments[0] : self.length + arguments[0];
+            rows = new Series([ self[num] ]);
+            indecies.push(num);
         }
 
         return new Proxy(rows, {
@@ -1500,13 +1506,24 @@
         return this.some(function(item){ return item==condition; });
     };
 
-    Series.prototype.show = function(){
+    Series.prototype.show = function(limit, wrap){
         var row,
             table   = [],
-            columns = this.columns();
+            series  = this;
+            columns = series.columns();
+
+        if(limit instanceof Array)
+            series = series.row(limit);
+        else if( limit==null || typeof limit=='undefined' )
+            series = this;
+        else
+            series = limit >=0 ? series.row([0, limit-1]) : series.row([limit, series.length-1]);
+
+
+
 
         if(typeof console.table=='undefined' || environment=='server'){
-            return this.tabular();
+            return series.tabular(wrap);
         }
 
         function Row(columns, values){
@@ -1514,8 +1531,8 @@
                 this[columns[c]] = values[columns[c]];
         }
 
-        for(var i=0; i<this.length; i++){
-            row = new Row(columns, this[i]);
+        for(var i=0; i<series.length; i++){
+            row = new Row(columns, series[i]);
             table.push(row);
         }
 
@@ -1523,7 +1540,7 @@
             table.push((new Row([],[])));
 
         console.table(table);
-        return this;
+        return series;
     };
 
     Series.prototype.tabular = function(wrap){
@@ -1644,7 +1661,6 @@
                 columns = Series.from(['index'].concat(cutoffs[i]));
                 display(wrapped[i], columns, offset);
             }
-
         }
         else{
             offset = 0;
