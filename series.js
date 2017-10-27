@@ -44,9 +44,9 @@
     };
 
     var Promote = function(a, d){
-        self = this;
+        var self = this;
 
-        this.direction = d;
+        self.direction = d;
 
         self.merge = function(){
             var args;
@@ -75,6 +75,62 @@
         self.resolve = function(){
             return a.resolve(this.direction);
         };
+
+        self.select = function(cutoff){
+            var i,
+                cut,
+                columns,
+                selected = [],
+                d = self.direction;
+
+            var select = function(d, co){
+                /* cut off point is inclusive */
+                columns = a.columns();
+                cut = columns.indexOf(co);
+
+                switch(d){
+                    case 'left':
+                        for(i=0; i<cut+1; i++)
+                            selected.push(columns[i]);
+                        break;
+                    case 'right':
+                        for(i=columns.length-1; i>=cut; i--)
+                            selected.push(columns[i]);
+                            selected = selected.reverse();
+                        break;
+                }
+                return a.select(...selected);
+            };
+
+            return  select(d, cutoff);
+        };
+
+        self.delete = function(cutoff){
+            var i,
+                cut,
+                columns,
+                d = self.direction;
+
+            var slice = function(d, co){
+                /* cut off point is inclusive */
+                columns = a.columns();
+                cut = columns.indexOf(co);
+
+                switch(d){
+                    case 'left':
+                        for(i=0; i<cut+1; i++)
+                            a.delete.column(columns[i]);
+                        break;
+                    case 'right':
+                        for(i=columns.length-1; i>=cut; i--)
+                            a.delete.column(columns[i]);
+                        break;
+                }
+                return a;
+            };
+
+            return  slice(d, cutoff);
+        };
     };
 
     var SeriesDataException = function SeriesDataException(message, name, code){
@@ -102,17 +158,8 @@
         series = new BaseSeries(arguments[0]);
 
         Object.setPrototypeOf(series, Series.prototype);
-        //Object.setPrototypeOf(series, proxy);
-        row = series[0];
-        //var proto = Object.getPrototypeOf(series);
-        //Object.setPrototypeOf(series, proto);
-        // check = series.every(function(row){
-        //     if(series.hasOwnProperty(row)) //&& row!==undefined )
-        //         return row instanceof Object && !(row instanceof Series);
-        //     //return true;
-        // });
-        //check2 = series.every(function(row){ return !(row instanceof Series); });
 
+        row = series[0];
         if( row instanceof Object && !(row instanceof Series) ){
             columns = series.columns();
             columns.forEach(function(col){
@@ -294,20 +341,25 @@
             status = true;
 
         function ajax(){
-            var color1 = environment!='server' ? ['color: #DA5486', 'color: #000000'] : ["", ""];
-            var color2 = environment!='server' ? ['color: #4BA8DA', 'color: #000000'] : ["", ""];
+            var text1  = "Resource loaded as: ";
+            var text2  = "Importing: ";
+            var color1 = environment!='server' ? ['color: #DA5486', 'color: #000000'] : [];
+            var color2 = environment!='server' ? ['color: #4BA8DA', 'color: #000000'] : [];
+
+            text1 = environment!='server' ? text1 + "%c\"" + name + "\"%c" : text1 + "\"" + name + "\"";
+            text2 = environment!='server' ? text2 + "%c\"" + url  + "\"%c" : text2 + "\"" + url  + "\"";
 
             return new Promise(function(resolve, reject){
                 xhttp = new XMLHttpRequest();
                 xhttp.onreadystatechange = function(){
                     if(this.readyState==4){
                         if(this.status==200){
-                            console.info("Resource loaded as: %c\"" + name + "\"%c", ...color1);
+                            console.info(text1, ...color1);
                             resolve(this.responseText);
                         }
                         else reject(this.status, this.statusText);
                     }
-                    else if(status) console.info("Importing: %c\"" + url +"\"%c", ...color2);
+                    else if(status) console.info(text2, ...color2);
                     status = false;
                 };
                 xhttp.open("GET", url, true);
@@ -689,6 +741,9 @@
     };
 
     Series.prototype.select = function(...args){
+        if(args.length==1 && args[0]=='*')
+            return this.clone();
+
         var selected = this.map(function(row){
             var copy = {};
             for(var col in row)
@@ -1032,7 +1087,7 @@
                         series = self.filter(function(row){return row[left]<right;});
                         break;
                     case 'like':
-                        series = self.filter(function(row){ if(row[left]) return row[left].match(right)!==null; });
+                        series = self.filter(function(row){ if(row[left]) return row[left].match(new RegExp(right,'i'))!==null; });
                         break;
                     default:
                         series = Series.from([]);
@@ -1336,100 +1391,53 @@
 
     Series.prototype.col = Series.prototype.getprop('col', function(){
         var series = this;
-        var row = series[0];
-        var proto = Object.create(Object.getPrototypeOf(series));
-        //Object.setPrototypeOf(series, proto);
+
         var factory = function(c){
             var column = {};
             column[Symbol.iterator] = function*(){
                 for(var i=0; i<series.length; i++){
-                    yield series[i][c];
+                    if(series[i]!==null && series[i]!==undefined && series[i].hasOwnProperty(c))
+                        yield series[i][c];
+                    else yield undefined;
                 }
             };
             return column;
         };
 
         var setter = function(target, name, value, receiver){
-            columns = target.columns(); //Object.keys(row);
+            var columns;
+
+            if(target!==series)
+                target = series;
+
+            columns = target.columns();
             columns.forEach(function(col){
                 var column = factory(col);
                 if(value)
-                    target.map(function(row, index){ row[name] = value[index]; return row; });
+                    target.map(function(row, index){
+                        row[name] = value[index];
+                        return row;
+                    });
             });
+
         };
 
         var getter = function(target, name, receiver){
-            //if(row instanceof Object && !(row instanceof Series)){
-                columns = target.columns(); //Object.keys(row);
-                columns.forEach(function(col){
-                    var column = factory(col);
+            var columns;
+            columns = target.columns();
+            columns.forEach(function(col){
+                var column = factory(col);
 
-                    if(!target.hasOwnProperty(col))
-                        Series.prototype.getprop(col, function(){
-                            return Series.from([...column]);
-                        }, setter);
-                        target[col] = Series.from([...column]);
-                        //receiver[col] = Series.from([...column]);
-                    //if(series.indexOf(col)<0)
-                    //    series[col] = series.getprop(col, function(){ return this.column(col); });
-                        //function(value){ return this.map(function(row){row[col] = value; }); }
-                });
-                return target[name];
-            // /}
+                if(!target.hasOwnProperty(col))
+                    target[col] = Series.prototype.getprop(col, function(){
+                        return Series.from([...column]);
+                    }, setter.bind(target, name));
+            });
+            return target[name];
         };
-
-        return new Proxy(series, { get: getter, set: setter });
+        var proxy = new Proxy(series, { get: getter, set: setter });
+        return proxy;
     });
-
-    // Series.prototype.col = Series.prototype.getprop('col', function(){
-    //     var self = this;
-
-    //     var getter = function(target, name, receiver){
-    //         if(!target.hasOwnProperty(name))
-    //             Object.defineProperty(target, name, {
-    //                 get : function(){ target[name] = target.column(name); return target[name]},
-    //                 //set : function(){ target.map(function(row, index){row[name] = target[name][index];return row;}) },
-    //                 configurable : true,
-    //                 enumerable  : true
-    //             });
-    //         //if(!target.hasOwnProperty(name))
-    //         //target[name] = target.column(name);
-    //         return target[name];
-    //         //return target[name];
-    //     };
-
-    //     var setter = function(target, name, value, receiver){
-    //         console.log(receiver)
-    //         if(value instanceof Series || value instanceof Array)
-    //         //var column = Series.from([]);
-    //         // value.forEach(function(item, index){
-    //         //     column.push(item);
-    //         //     self[index][name] = item;
-    //         // });
-    //         //
-    //         //
-    //         target[name] = 
-    //         target.map(function(row, index){
-    //             row[name] = value[index];
-    //             //debugger;
-    //             //Object.assign(row, value[index]);
-    //             //column.push(value[index]);
-    //             return row;
-    //         });
-
-    //         //else if(value instanceof Function)
-    //         //    target.map(function(row, index, array){
-    //         //        row[name] = value(row[name], row, index, array);
-    //         //        return row;
-    //         //    });
-    //         else target[name] = value;//target.map(function(row){row[name] = value; return row;});
-    //         //target[name] = Series.prototype.getprop(name, getter);
-    //         // target[name] = Series.prototype.getprop(name, target.column.bind(target, name));
-    //         //target[name] = column;
-    //     };
-
-    //     return new Proxy(self, { get: getter, set: setter });
-    // });
 
     Series.prototype.row = function(){
         var rows,
@@ -1518,19 +1526,28 @@
         return this;
     };
 
-    Series.prototype.tabular = function(){
+    Series.prototype.tabular = function(wrap){
         var hr,
             row,
             col,
             spc,
+            cut,
             repeat,
             values,
             display,
-            wrap    = 40,
+            longest,
+            column,
+            segment,
+            remainder,
+            offset  = 0,
+            wrap    = wrap ? wrap : 80,
             width   = [],
             max     = [],
-            table   = [],
             spacer  = 4,
+            total   = 0,
+            wrapped = [],
+            cutoffs = [],
+            selects = [],
             columns = Series.from(['index'].concat(this.columns()));
             series  = this;
 
@@ -1538,16 +1555,19 @@
            return Array(length>0 ? length+1 : 1).join(char!==undefined ? char : " ");
         };
 
-        render = function(table){
+        render = function(table, columns, offset){
             table.forEach(function(row, index){
                 if(index===0){
                     col = "";
                     spc = [];
                     hr  = "";
 
-                    columns.forEach(function(value, index){ spc.push( max[index] - String(value).length); });
                     columns.forEach(function(value, index){
-                        col += value + repeat(spc[index]+spacer);
+                        index = index!==0 ? offset + index : index;
+                        spc.push( max[index] - String(value).length);
+                    });
+                    columns.forEach(function(value, index){
+                        col += value + repeat(spc[index] + spacer);
                         hr  += repeat(String(value).length, "-") + repeat(spc[index] + spacer);
                     });
 
@@ -1559,61 +1579,80 @@
             return "count: " + series.count;
         };
 
-        display = function(series){
+        display = function(series, columns, offset){
+            table = [];
             for(var i=0; i<series.length; i++){
                 row = i + repeat(max[0] - String(i).length + spacer);
                 spc = [];
-                values = Object.values(series[i]);
 
-                values.forEach(function(value, index){ spc.push(max[index+1] - String(value).length); });
+                values = [];
+                columns.forEach(function(c, n){if(n>0)values.push(String(series[i][c]));});
+                values.forEach(function(value, index){ spc.push(max[offset + index + 1] - value.length); });
 
-                values.forEach(function(value, index){ row += String(value) + repeat(spc[index] + spacer);});
+                values.forEach(function(value, index){ row += value + repeat(spc[index] + spacer); });
 
                 table.push(row);
             }
-            return render(table);
+            return render(table, columns, offset);
         };
 
         columns.forEach(function(column, index){
             values = [];
             series.forEach(function(row, index){ values.push(column!='index' ? String(row[column]) : String(index)); });
-            max.push(Series.from([column]).concat(values).longest().length);
-            //width.push(Series.from([column]).concat(values).join().length);
+            longest = Series.from([column].concat(values)).longest().length;
+            max.push(longest);
         });
 
         width = Series.from(max).sum() + spacer * columns.count;
 
         if(width > wrap){
-            var total   = 0;
-            var cols    = [];
-            var wrapped = [];
-            var segment = Series.empty(series.length);
-
             max.forEach(function(width, index){
-                var c = columns[index+1];
-                if(total+width+spacer>=wrap){
-                    wrapped.push({columns: cols, rows:segment});
-                    segment = Series.empty(series.length);
-                    segment.col[c] = series.col[c];
-                    cols = [];
-                    total = 0;
-                }
-                else{
-                    cols.push(c);
-                    segment.col[c] = series.col[c];
-                    total += width + spacer;
+                if(index>0){
+                    var c = columns[index];
+
+                    if(total + width + spacer >= wrap && index!=max.length-1){
+                        cutoffs.push(selects);
+                        selects = [c];
+                        total = width + spacer;
+                    }
+                    else if(index==max.length-1){
+                        selects.push(c);
+                        cutoffs.push(selects);
+                        total = 0;
+                        selects = [];
+                    }
+                    else{
+                        selects.push(c);
+                        total += width + spacer;
+                    }
                 }
             });
 
+            remainder = series;
+
+            cutoffs.forEach(function(selects, index){
+                cut       = cutoffs[index];
+                column    = cut[cut.length - 1];
+                segment   = remainder.left.select(column);
+                remainder = series.right.select(columns[columns.indexOf(column)+1]);
+                wrapped.push(segment);
+            });
+
             for(var i=0; i<wrapped.length; i++){
-                console.log(wrapped[i]);
-                columns = wrapped[i].columns;
-                display(wrapped[i].rows);
+                console.log("\n");
+                offset += i > 0 ? cutoffs[i-1].length : 0;
+                columns = Series.from(['index'].concat(cutoffs[i]));
+                display(wrapped[i], columns, offset);
             }
+
         }
         else{
-            display(series);
+            offset = 0;
+            columns = Series.from(['index'].concat(this.columns()));
+            console.log("\n");
+            display(series, columns, offset);
         }
+        return ["count", series.count];
     };
 
     if(environment=='server'){
