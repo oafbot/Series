@@ -36,6 +36,8 @@
 	animals = animals.merge(wild, {on:'id'});
 	animals = animals.merge(data, {on:'id'});
 	animals.columns(["id", "name", "species", "skill", "eats", "habitat", "size", "vaccinated"]);
+    animals.commit();
+    /*debating whether commits on column reorder should be automatic */
 
 	dogs = animals.where("species=dog");
 	</script>

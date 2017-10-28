@@ -3,6 +3,11 @@
     var environment = typeof window=='undefined' ? 'server' : 'browser';
     var exports     = typeof module!='undefined' ? module.exports : {};
 
+    var AUTO_INDEX   = false;
+    var INDEX_LABEL  = "_";
+    var INDEX_OFFSET = 0;
+    var AUTO_COMMIT  = true;
+
     var istype = function(obj){
         if(obj===null)
             return "Null";
@@ -153,7 +158,7 @@
     BaseSeries.prototype = new Array();
 
     var Series = function Series(){
-        var series, row, columns, self;
+        var series, row, columns, self, proto;
         self = this;
         series = new BaseSeries(arguments[0]);
 
@@ -162,15 +167,37 @@
         row = series[0];
         if( row instanceof Object && !(row instanceof Series) ){
             columns = series.columns();
-            columns.forEach(function(col){
-                series.col[col];
-            });
+
+            if(this.col !== undefined )
+                columns.forEach(function(col){
+                    this[col] = series.getprop(col, function(){ return this.col[col]; });
+                });
+
+            if(AUTO_INDEX===true){
+                if(arguments[0] instanceof Series || arguments[0] instanceof Array){
+                    series.reindex(INDEX_LABEL, INDEX_OFFSET, false);
+                }
+                else if((arguments[0] instanceof Series || arguments[0] instanceof Array ) &&
+                       !Object.getPrototypeOf(arguments[0]).hasOwnProperty('_indexed')){
+
+                    proto = Object.create(Object.getPrototypeOf(series));
+                    proto._indexed = Series.export(series, 'json');
+
+                    Object.setPrototypeOf(series, proto);
+                }
+            }
         }
         return series;
     };
 
-    Series.prototype = BaseSeries.prototype;
+    Series.AUTO_INDEX   = AUTO_INDEX;
+    Series.INDEX_LABEL  = INDEX_LABEL;
+    Series.INDEX_OFFSET = INDEX_OFFSET;
+    Series.AUTO_COMMIT  = AUTO_COMMIT;
+
+    Series.prototype = new Series();
     Series.prototype.constructor = Series;
+    Series.prototype.constructor.prototype = BaseSeries.prototype;
     Series.prototype.toString = function(){return '[object Series]';};
 
     /* Brute force extend array methods */
@@ -207,7 +234,7 @@
         if(data instanceof Array){
             check = function(data){
                 return data.length==2 && (data[1] instanceof Array || data[1] instanceof Series) && data[1].every(function(row){
-                    return row instanceof Array || row instanceof Series });
+                    return row instanceof Array || row instanceof Series; });
             };
 
             if(check(data)){
@@ -414,8 +441,20 @@
         return exported;
     };
 
-    Series.empty = function(num){
-        var empty = function(n){ return new Array(n).fill({}); };
+    Series.empty = function(num, cols){
+        var row = (function(){
+            var obj = {};
+            if(cols!==undefined)
+                cols.forEach(function(c){ obj[c] = null; });
+            return obj;
+        }());
+
+        var empty = function(n){
+            var a = new Array(n);
+            for(var i=0;i<n;i++)
+                a[i] = Object.assign({}, row);
+            return a;
+        };
         return new Series(empty(num));
     };
 
@@ -603,18 +642,17 @@
            return column;
     };
 
-    Series.prototype._columns = undefined;
-
     Series.prototype.columns = function(cols){
         var proto = Object.getPrototypeOf(this);
         var _columns;
         if(cols===undefined){
             _columns = Series.from([]);
 
-            for(var i=0; i<this.length; i++)
+            for(var i=0, n=this.length; i<n; i++)
                 _columns = _columns.concat(this[i]!==null && this[i]!==undefined ? Object.keys(this[i]) : this[i]);
 
             _columns = _columns.unique();
+            proto._columns = _columns;
             return _columns;
         }
         else{
@@ -629,7 +667,11 @@
                 for(c=0; c<cols.length; c++)
                     this[row][cols[c]] = table[row][cols[c]];
             }
-            //_columns = cols;
+            proto._columns = Series.from(cols);
+            /* debating whether commits on column reorder should be automatic */
+            //if(Series.AUTO_COMMIT)
+            //    this.commit();
+            return this;
         }
     };
 
@@ -647,6 +689,47 @@
 
     Series.prototype.orderby = function(col){
         return this.sort(function(a, b){if(a[col] > b[col]) return 1; else if(a[col] < b[col]) return -1; return 0;});
+    };
+
+    Series.prototype.reindex = function(label, offset, commit){
+        offset = typeof offset!='undefined' ? offset : INDEX_OFFSET;
+        label  = typeof label !='undefined' ? label  : INDEX_LABEL;
+        commit = typeof commit!='undefined' ? commit : AUTO_COMMIT;
+
+        for(var i=0, n=this.length; i<n; i++)
+            this[i][label] = i + offset;
+
+        //Series.AUTO_COMMIT = false;
+        if(commit)
+            this.commit();
+        //Series.AUTO_COMMIT = AUTO_COMMIT;
+        return this;
+    };
+
+    Series.prototype.commit = function(){
+        var proto;
+        proto = Object.create(Object.getPrototypeOf(this));
+        delete proto._indexed;
+        Object.setPrototypeOf(this, proto);
+
+        proto._indexed  = Series.export(this, 'json');
+        proto._columns  = this.columns();
+
+        Object.setPrototypeOf(this, proto);
+
+        return this;
+    };
+
+    Series.prototype.revert = function(){
+        var proto = Object.getPrototypeOf(this);
+        if(proto.hasOwnProperty('_indexed'))
+            return Series.from(proto._indexed);
+        try{
+            throw new SeriesDataException("No primal form of this dataset was found in the prototype chain. To create an indexed copy, call Series.prototype.commit, or call Series.prototype.reindex with the commit flag set to true.", "Indexed copy not found");
+        }
+        catch(e){
+            return this;
+        };
     };
 
     Series.prototype.top = function(limit){
@@ -733,6 +816,10 @@
     };
 
     Series.prototype.range = function(start, end){
+        return Series.from(Array.apply(null, Array(end-start+1)).map(function(e, i){return i + start;}));
+    };
+
+    Series.prototype.between = function(start, end){
        return this.slice(start, end+1);
     };
 
@@ -1397,7 +1484,7 @@
             var column = {};
             column[Symbol.iterator] = function*(){
                 for(var i=0; i<series.length; i++){
-                    if(series[i]!==null && series[i]!==undefined && series[i].hasOwnProperty(c))
+                    if(series[i].hasOwnProperty(c))
                         yield series[i][c];
                     else yield undefined;
                 }
@@ -1411,28 +1498,22 @@
             if(target!==series)
                 target = series;
 
-            columns = target.columns();
-            columns.forEach(function(col){
-                var column = factory(col);
-                if(value)
-                    target.map(function(row, index){
-                        row[name] = value[index];
-                        return row;
-                    });
-            });
-
+            if(typeof value!=='undefined' && value instanceof Array)
+                target.map(function(row, index){ row[name] = value[index]; return row; });
+            else if(typeof value!=='undefined')
+                target.map(function(row, index){ row[name] = value; return row; });
         };
 
         var getter = function(target, name, receiver){
-            var columns;
+            var columns, proto;
+            proto = Object.getPrototypeOf(target);
+
             columns = target.columns();
             columns.forEach(function(col){
-                var column = factory(col);
-
-                if(!target.hasOwnProperty(col))
-                    target[col] = Series.prototype.getprop(col, function(){
-                        return Series.from([...column]);
-                    }, setter.bind(target, name));
+                var column = factory.call(target, col);
+                target[col] = Series.prototype.getprop(col, function(){
+                    return Series.from([...column]);
+                });
             });
             return target[name];
         };
@@ -1454,8 +1535,9 @@
         }
         else if(arguments[0] instanceof Array){
             num  = arguments[0][0] >= 0 ? arguments[0][0] : self.length + arguments[0][0];
-            num2 = arguments[0][1] >  0 ? arguments[0][1] : self.length + arguments[0][1];
-            rows = self.range(num, num2);
+            num2 = arguments[0][1] >= 0 ? arguments[0][1] : self.length + arguments[0][1];
+            num2 = num2 < num ? self.length : num2;
+            rows = self.between(num, num2);
             for(var i=num;i<num2+1; i++)
                 indecies.push(i);
         }
@@ -1492,6 +1574,10 @@
         });
     };
 
+    Series.prototype.insert = function(values, position){
+
+    };
+
     Series.prototype.all = function(condition){
         if(typeof condition=='function')
             return this.every(function(item){ return condition(item); });
@@ -1518,9 +1604,6 @@
             series = this;
         else
             series = limit >=0 ? series.row([0, limit-1]) : series.row([limit, series.length-1]);
-
-
-
 
         if(typeof console.table=='undefined' || environment=='server'){
             return series.tabular(wrap);
@@ -1677,7 +1760,6 @@
     }
 
     scope.Series = Series;
-
     return Series;
 
 }).call(this, typeof window=='undefined' ? global : window);
