@@ -1,14 +1,24 @@
 (function(global){
-    var scope = this;
-    var environment = typeof window=='undefined' ? 'server' : 'browser';
-    var exports     = typeof module!='undefined' ? module.exports : {};
+    var scope = this,
+        environment = typeof window=='undefined' ? 'server' : 'browser',
+        exports     = typeof module!='undefined' ? module.exports : {},
 
-    var AUTO_INDEX   = false;
-    var INDEX_LABEL  = "_";
-    var INDEX_OFFSET = 0;
-    var AUTO_COMMIT  = true;
+        AUTO_INDEX   = false,
+        AUTO_COMMIT  = true,
+        INDEX_LABEL  = "_",
+        INDEX_OFFSET = 0,
 
-    var istype = function(obj){
+        istype,
+        colnums,
+        extend,
+        namespace,
+
+        Series,
+        Promote,
+        BaseSeries,
+        SeriesDataException;
+
+    istype = function(obj){
         if(obj===null)
             return "Null";
         if(obj instanceof Series || obj instanceof BaseSeries)
@@ -16,21 +26,28 @@
         return Object.prototype.toString.call(obj).slice(8, -1);
     };
 
-    var colnums = function(data){
+    colnums = function(data){
         var max = 0;
         for(var i=0; i<data.length; i++)
             max = (data[i].length > max) ? data[i].length : max;
         return Array.apply(null, Array(max)).map(function(e, i) {return i;});
     };
 
-    var extend = function(fn, args){
+    extend = function(fn, args){
         var result = fn.call(this, ...args);
         if( result instanceof Array && !(result instanceof Series) )
             return Series(result);
         return result;
     };
 
-    var namespace = function(path){
+    inherit = function(_new_, _base_){
+        var proto = Object.getPrototypeOf(_base_);
+        if(proto._index!==undefined)
+            Object.setPrototypeOf(_new_, Object.create(proto));
+        return _new_;
+    };
+
+    namespace = function(path){
         var i,
             spaces  = path.split("."),
             context = spaces[0]=='global' || spaces[0]=='window' ? global : scope,
@@ -48,7 +65,7 @@
         return {path:context, name:name};
     };
 
-    var Promote = function(a, d){
+    Promote = function(a, d){
         var self = this;
 
         self.direction = d;
@@ -138,7 +155,7 @@
         };
     };
 
-    var SeriesDataException = function SeriesDataException(message, name, code){
+    SeriesDataException = function SeriesDataException(message, name, code){
         this.message = message;
         this.code = 1;
         this.name = !name ? 'SeriesDataException' : name;
@@ -146,10 +163,11 @@
     };
     SeriesDataException.prototype = new Error();
 
-    var BaseSeries = function BaseSeries(){
+    BaseSeries = function BaseSeries(){
         var args   = (arguments[0] instanceof Array) ? arguments[0] : arguments,
             series = [];
 
+        //console.log(arguments[0])
         series.push.apply(series, args);
         Object.setPrototypeOf(series, BaseSeries.prototype);
 
@@ -157,7 +175,7 @@
     };
     BaseSeries.prototype = new Array();
 
-    var Series = function Series(){
+    Series = function Series(){
         var series, row, columns, self, proto;
         self = this;
         series = new BaseSeries(arguments[0]);
@@ -182,6 +200,7 @@
 
                     proto = Object.create(Object.getPrototypeOf(series));
                     proto._indexed = Series.export(series, 'json');
+                    //proto._index = series._index;
 
                     Object.setPrototypeOf(series, proto);
                 }
@@ -228,6 +247,31 @@
     Series.prototype.splice      = function(){ return extend.call(this, Array.prototype.splice,      arguments); };
     Series.prototype.unshift     = function(){ return extend.call(this, Array.prototype.unshift,     arguments); };
 
+    SeriesFactory = function(data, index){
+        var proto,
+            assign,
+            series;
+
+        series = new Series(data);
+
+        assign = function(_new_, _base_){
+            proto = Object.create(Object.getPrototypeOf(_base_));
+            proto._index = _base_._index;
+            Object.setPrototypeOf(_new_, proto);
+        };
+
+        if(index!==undefined){
+            //console.log(index);
+            series.index(index);
+        }
+        else if(typeof data._index!=='undefined'){
+            console.log(data._index);
+            assign(series, data);
+        }
+
+        return series;
+    };
+
     Series.from = function(data, done){
         var series, columns, rows, check;
 
@@ -249,9 +293,9 @@
                         return row;
                     })());
                 });
-                return new Series(series);
+                return SeriesFactory(series);
             }
-            return new Series(data);
+            return SeriesFactory(data);
         }
         else if(typeof data=='string'){
             if(data.split('.').pop()=='csv'){
@@ -278,7 +322,7 @@
                     row[columns[c]] = data.rows[i][c];
                 series.push(row);
             }
-            return new Series(series);
+            return SeriesFactory(series);
         }
     };
 
@@ -455,7 +499,7 @@
                 a[i] = Object.assign({}, row);
             return a;
         };
-        return new Series(empty(num));
+        return Series.from(empty(num));
     };
 
     Series.prototype.getprop = (function(prop, getter, setter){
@@ -485,6 +529,8 @@
     };
 
     is.prototype.numeric = function(col){
+        if(this.series.count<=0)
+            return false;
         if(col!==undefined){
             return this.series.filter(function(row){
                 return !isNaN(parseFloat(row[col])) && isFinite(row[col]);
@@ -498,6 +544,9 @@
     is.prototype.string = function(col){
         var i, char, check;
 
+        if(this.series.count<=0)
+            return false;
+
         check = function(item){ return typeof item=='string' || item instanceof String; };
 
         if(col!==undefined)
@@ -507,6 +556,9 @@
 
     is.prototype.alphanumeric = function(col){
         var i, char, check;
+
+        if(this.series.count<=0)
+            return false;
 
         check = function(item){
             if(typeof item=='number' || item instanceof Number)
@@ -531,6 +583,9 @@
 
     is.prototype.empty = function(col){
         var i, char, check;
+
+        if(this.series.count<=0)
+            return true;
 
         check = function(item){
             return(
@@ -602,7 +657,9 @@
     };
 
     Series.prototype.clone = function(){
-        return this.map(function(a){return Object.assign({}, a);});
+        var clone = this.map(function(a){return Object.assign({}, a);});
+        clone = inherit(clone, this);
+        return clone;
     };
 
     Series.prototype.diff = function(a){
@@ -668,9 +725,8 @@
                     this[row][cols[c]] = table[row][cols[c]];
             }
             proto._columns = Series.from(cols);
-            /* debating whether commits on column reorder should be automatic */
-            //if(Series.AUTO_COMMIT)
-            //    this.commit();
+            /* debating whether commits should be automatic */
+            //if(Series.AUTO_COMMIT) this.commit();
             return this;
         }
     };
@@ -691,7 +747,21 @@
         return this.sort(function(a, b){if(a[col] > b[col]) return 1; else if(a[col] < b[col]) return -1; return 0;});
     };
 
+    Series.prototype.index = function(column){
+        var proto = Object.getPrototypeOf(this);
+        if(typeof column!='undefined'){
+            proto = Object.create(proto);
+            proto._index = column;
+            this.columns();
+            Object.setPrototypeOf(this, proto);
+        }
+        else{
+            return typeof proto._index != 'undefined' ? this.column(proto._index) : Series.from([]);
+        }
+    };
+
     Series.prototype.reindex = function(label, offset, commit){
+        label  = typeof this._index!='undefined' ? this._index : label;
         offset = typeof offset!='undefined' ? offset : INDEX_OFFSET;
         label  = typeof label !='undefined' ? label  : INDEX_LABEL;
         commit = typeof commit!='undefined' ? commit : AUTO_COMMIT;
@@ -699,10 +769,18 @@
         for(var i=0, n=this.length; i<n; i++)
             this[i][label] = i + offset;
 
-        //Series.AUTO_COMMIT = false;
+        this.index(label);
+
+        var columns = this.columns();
+        var index = columns.indexOf(label);
+
+        var left  = columns.splice(0, index);
+        var right = columns.splice(index+1, columns.length);
+
+        this.columns([label].concat(left, right));
+
         if(commit)
             this.commit();
-        //Series.AUTO_COMMIT = AUTO_COMMIT;
         return this;
     };
 
@@ -839,6 +917,7 @@
             return copy;
         });
         selected.columns(args);
+        inherit(selected, this);
         return selected;
     };
 
@@ -1062,12 +1141,6 @@
                    statement.hasOwnProperty('operator');
         };
 
-        var istype = function(obj){
-            if(obj===null)
-                return "Null";
-            return Object.prototype.toString.call(obj).slice(8, -1);
-        };
-
         var evaluate = function(statement){
             var left, right, op, series;
 
@@ -1218,6 +1291,8 @@
                 }
             }
             series = series===undefined ? Series.from([]) : series;
+
+            inherit(series, self);
             return series;
         };
 
@@ -1248,14 +1323,53 @@
             on        = 'index',
             label     = {left:'left', right:'right'},
             join      = 'full', /* full or outer, inner, left, right */
-            prototype = Object.getPrototypeOf(this);
+            prototype = Object.getPrototypeOf(this),
+            _merge_,
+            _join_,
+            _resolve_,
+            Unresolved;
 
-        var Unresolved = function Unresolved(left, right){ this[label.left ] = left; this[label.right] = right; };
+        Unresolved = function Unresolved(left, right){
+            this[label.left ] = left;
+            this[label.right] = right;
+        };
+
         Unresolved.prototype = new Unresolved();
         Unresolved.prototype.constructor = Unresolved;
         Unresolved.prototype.toString = function(){return '[object Unresolved]';};
 
-        var _join_ = function(left, right){
+        _resolve_ = function(left, right){
+            var p, o, m, k, overlap, matches, promote, demote;
+
+            if(resolve){
+                promote = resolve=='left' ? left  : right;
+                demote  = promote===left  ? right : left;
+
+                overlap = promote.columns().intersect(demote.columns());
+                overlap = overlap.indexOf(on)<0 ? overlap : overlap.delete.index(overlap.indexOf(on));
+
+                if(on=='index'){
+                    for(p=0; p<promote.length; p++)
+                        if(p<demote.length)
+                            for(k in promote[p])
+                                if(overlap.indexOf(k)>-1)
+                                     delete demote[p][k];
+                }
+                else{
+                    matches = demote.filter(function(row){
+                        return promote.filter(function(row2){return row[on]==row2[on];})[0];
+                    });
+
+                    for(o=0; o<overlap.length; o++)
+                        for(m=0; m<matches.length; m++)
+                            for(k in matches[m])
+                                if(k==overlap[o])
+                                    delete demote[demote.indexOf(matches[m])][overlap[o]];
+                }
+            }
+        };
+
+        _join_ = function(left, right){
             var swap, merged, unique, ix, intersect;
 
             if(on=='index'){
@@ -1337,10 +1451,18 @@
                     merged = left.concat(unique);
                 }
             }
+            if(merged._index===undefined){
+                if(left._index!==undefined && join!='right'){
+                    inherit(merged, left);
+                }
+                else if(right._index!==undefined && join!='left'){
+                    inherit(merged, right);
+                }
+            }
             return merged;
         };
 
-        var merge = function(){
+        _merge_ = function(){
             var left,
                 right,
                 longer,
@@ -1399,37 +1521,6 @@
             return merged;
         };
 
-        var _resolve_ = function(left, right){
-            var p, o, m, k, overlap, matches, promote, demote;
-
-            if(resolve){
-                promote = resolve=='left' ? left  : right;
-                demote  = promote===left  ? right : left;
-
-                overlap = promote.columns().intersect(demote.columns());
-                overlap = overlap.indexOf(on)<0 ? overlap : overlap.delete.index(overlap.indexOf(on));
-
-                if(on=='index'){
-                    for(p=0; p<promote.length; p++)
-                        if(p<demote.length)
-                            for(k in promote[p])
-                                if(overlap.indexOf(k)>-1)
-                                     delete demote[p][k];
-                }
-                else{
-                    matches = demote.filter(function(row){
-                        return promote.filter(function(row2){return row[on]==row2[on];})[0];
-                    });
-
-                    for(o=0; o<overlap.length; o++)
-                        for(m=0; m<matches.length; m++)
-                            for(k in matches[m])
-                                if(k==overlap[o])
-                                    delete demote[demote.indexOf(matches[m])][overlap[o]];
-                }
-            }
-        };
-
         if(args.length>1){
             if(Series.prototype.isPrototypeOf(args[0]) && Series.prototype.isPrototypeOf(args[1])){
                 s1 = args[0];
@@ -1456,7 +1547,7 @@
             s2 = args[0];
         }
 
-        return merge();
+        return _merge_();
     };
 
     Series.prototype.left = Series.prototype.getprop('left', function(){
@@ -1480,23 +1571,17 @@
     Series.prototype.col = Series.prototype.getprop('col', function(){
         var series = this;
 
-        var factory = function(c){
+        var factory = function(series, c){
             var column = {};
             column[Symbol.iterator] = function*(){
-                for(var i=0; i<series.length; i++){
-                    if(series[i].hasOwnProperty(c))
-                        yield series[i][c];
-                    else yield undefined;
-                }
+                for(var i=0, n=series.length; i<n; i++)
+                    yield series[i][c];
             };
             return column;
         };
 
         var setter = function(target, name, value, receiver){
             var columns;
-
-            if(target!==series)
-                target = series;
 
             if(typeof value!=='undefined' && value instanceof Array)
                 target.map(function(row, index){ row[name] = value[index]; return row; });
@@ -1510,9 +1595,9 @@
 
             columns = target.columns();
             columns.forEach(function(col){
-                var column = factory.call(target, col);
                 target[col] = Series.prototype.getprop(col, function(){
-                    return Series.from([...column]);
+                    columns = factory(this, col);
+                    return Series.from([...columns]);
                 });
             });
             return target[name];
@@ -1542,13 +1627,12 @@
                 indecies.push(i);
         }
         else if(typeof arguments[0]=='string'){
-            index = self.indexOf(arguments[0]);
-            rows = (index>-1) ? Series.from([self[index]]) : Series.from([]);
-            indecies.push(index);
+            rows = self.where(arguments[0]);
+            indecies.concat( self.filter(function(r, i){if(rows.indexOf(r)>-1) return i;}) );
         }
         else{
             num = arguments[0] >= 0 ? arguments[0] : self.length + arguments[0];
-            rows = new Series([ self[num] ]);
+            rows = Series.from([ self[num] ]);
             indecies.push(num);
         }
 
@@ -1575,7 +1659,22 @@
     };
 
     Series.prototype.insert = function(values, position){
+        var row  = {};
+        var cols = this.columns();
 
+        if(typeof this._index!='undefined' && this.index().is.numeric())
+            values = [this.column(this._index).last(1).pop()+1].concat(values);
+
+        if(values.length < cols.length)
+            try{
+                throw new SeriesDataException("The number of values given do not match the number of columns.", "Range Error");
+            }
+            catch(e){}
+
+        for(var i=0, n=values.length; i<n; i++)
+            row[cols[i]] = values[i];
+        this.push(row);
+        return this;
     };
 
     Series.prototype.all = function(condition){
@@ -1755,11 +1854,11 @@
     };
 
     if(environment=='server'){
-        exports.Series = Series;
+        exports.Series = SeriesFactory;
         return exports;
     }
 
-    scope.Series = Series;
-    return Series;
+    scope.Series = SeriesFactory;
+    return SeriesFactory;
 
 }).call(this, typeof window=='undefined' ? global : window);

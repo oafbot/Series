@@ -5,23 +5,24 @@
 	<script type="text/javascript" src="series.js" ></script>
 	<script type="text/javascript">
 
-    var domestic = new Series([
+    var domestic = Series([
     	{ name :'bonk',    species:'dog', skill:'bark', id:0 },
     	{ name :'mittens', species:'cat', skill:'meow', id:1 }
-    ]);
+    ], 'id');
+    //domestic.index('id');
 
-    var barnyard = new Series([
+    var barnyard = Series([
         { name:'billy',    species:'goat', skill:'baa',  eats:'shrubbery', id:2},
     	{ name:'snowball', species:'pig',  skill:'oink', eats:'feed',      id:3},
     	{ name:'bazooka',  species:'dog',  skill:'bark', eats:'dog food',  id:4},
-    ]);
+    ], 'id');
 
-    var wild = new Series([
+    var wild = Series([
         { name :'leo',  species : 'lion',  skill : 'roar',   eats :'meat',  id:5 },
     	{ name :'hugo', species : 'hippo', skill : 'lumber', eats :'pizza', id:6 }
-    ]);
+    ], 'id');
 
-    var data = new Series([
+    var data = Series([
 	    { id:0, vaccinated:true,   habitat:'house', size:'small'},
     	{ id:1, vaccinated:true,   habitat:'house', size:'small'},
     	{ id:2, vaccinated:false,  habitat:'farm',  size:'small'},
@@ -30,13 +31,13 @@
     	{ id:5, vaccinated:true,   habitat:'zoo',   size:'large'},
     	{ id:6, vaccinated:false,  habitat:'zoo',   size:'large'},
     	{ id:7, vaccinated:false,  habitat:'farm',  size:'small'}
-	]);
+	], 'id');
 
 	animals = domestic.merge(barnyard, {on:'id'});
 	animals = animals.merge(wild, {on:'id'});
 	animals = animals.merge(data, {on:'id'});
 	animals.columns(["id", "name", "species", "skill", "eats", "habitat", "size", "vaccinated"]);
-    animals.commit();
+    //animals.commit();
     /*debating whether commits on column reorder should be automatic */
 
 	dogs = animals.where("species=dog");
