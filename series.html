@@ -9,7 +9,7 @@
     	{ name :'bonk',    species:'dog', skill:'bark', id:0 },
     	{ name :'mittens', species:'cat', skill:'meow', id:1 }
     ], 'id');
-    //domestic.index('id');
+    /*domestic.index('id');*/
 
     var barnyard = Series([
         { name:'billy',    species:'goat', skill:'baa',  eats:'shrubbery', id:2},
@@ -38,7 +38,6 @@
 	animals = animals.merge(data, {on:'id'});
 	animals.columns(["id", "name", "species", "skill", "eats", "habitat", "size", "vaccinated"]);
     //animals.commit();
-    /*debating whether commits on column reorder should be automatic */
 
 	dogs = animals.where("species=dog");
 	</script>

@@ -3,7 +3,7 @@
         environment = typeof window=='undefined' ? 'server' : 'browser',
         exports     = typeof module!='undefined' ? module.exports : {},
 
-        AUTO_INDEX   = false,
+        AUTO_INDEX   = true,
         AUTO_COMMIT  = true,
         INDEX_LABEL  = "_",
         INDEX_OFFSET = 0,
@@ -167,7 +167,6 @@
         var args   = (arguments[0] instanceof Array) ? arguments[0] : arguments,
             series = [];
 
-        //console.log(arguments[0])
         series.push.apply(series, args);
         Object.setPrototypeOf(series, BaseSeries.prototype);
 
@@ -191,20 +190,19 @@
                     this[col] = series.getprop(col, function(){ return this.col[col]; });
                 });
 
-            if(AUTO_INDEX===true){
-                if(arguments[0] instanceof Series || arguments[0] instanceof Array){
-                    series.reindex(INDEX_LABEL, INDEX_OFFSET, false);
-                }
-                else if((arguments[0] instanceof Series || arguments[0] instanceof Array ) &&
-                       !Object.getPrototypeOf(arguments[0]).hasOwnProperty('_indexed')){
+            // if(AUTO_INDEX===true){
+            //     if(arguments[0] instanceof Series || arguments[0] instanceof Array){
+            //         //series.reindex(INDEX_LABEL, INDEX_OFFSET, false);
+            //     }
+            //     else if((arguments[0] instanceof Series || arguments[0] instanceof Array ) &&
+            //            !Object.getPrototypeOf(arguments[0]).hasOwnProperty('_indexed')){
 
-                    proto = Object.create(Object.getPrototypeOf(series));
-                    proto._indexed = Series.export(series, 'json');
-                    //proto._index = series._index;
+            //         //proto = Object.create(Object.getPrototypeOf(series));
+            //         //proto._indexed = Series.export(series, 'json');
 
-                    Object.setPrototypeOf(series, proto);
-                }
-            }
+            //         //Object.setPrototypeOf(series, proto);
+            //     }
+            // }
         }
         return series;
     };
@@ -261,13 +259,19 @@
         };
 
         if(index!==undefined){
-            //console.log(index);
             series.index(index);
         }
         else if(typeof data._index!=='undefined'){
             console.log(data._index);
             assign(series, data);
         }
+        else if(AUTO_INDEX){
+            if(series._index)
+            series.reindex();
+        }
+
+        if(AUTO_COMMIT)
+            series.commit();
 
         return series;
     };
@@ -700,10 +704,13 @@
     };
 
     Series.prototype.columns = function(cols){
+        /* note: a Series.from() call made from within
+                this method will result in infinite recursion!!
+        */
         var proto = Object.getPrototypeOf(this);
         var _columns;
         if(cols===undefined){
-            _columns = Series.from([]);
+            _columns = new Series([]);
 
             for(var i=0, n=this.length; i<n; i++)
                 _columns = _columns.concat(this[i]!==null && this[i]!==undefined ? Object.keys(this[i]) : this[i]);
@@ -724,9 +731,9 @@
                 for(c=0; c<cols.length; c++)
                     this[row][cols[c]] = table[row][cols[c]];
             }
-            proto._columns = Series.from(cols);
+            proto._columns = new Series(cols);
             /* debating whether commits should be automatic */
-            //if(Series.AUTO_COMMIT) this.commit();
+            if(Series.AUTO_COMMIT) this.commit();
             return this;
         }
     };
@@ -752,7 +759,15 @@
         if(typeof column!='undefined'){
             proto = Object.create(proto);
             proto._index = column;
-            this.columns();
+
+            var columns = this.columns();
+            var index = columns.indexOf(column);
+
+            var left  = columns.splice(0, index);
+            var right = columns.splice(index+1, columns.length);
+
+            this.columns([column].concat(left, right));
+
             Object.setPrototypeOf(this, proto);
         }
         else{
@@ -762,22 +777,14 @@
 
     Series.prototype.reindex = function(label, offset, commit){
         label  = typeof this._index!='undefined' ? this._index : label;
-        offset = typeof offset!='undefined' ? offset : INDEX_OFFSET;
         label  = typeof label !='undefined' ? label  : INDEX_LABEL;
+        offset = typeof offset!='undefined' ? offset : INDEX_OFFSET;
         commit = typeof commit!='undefined' ? commit : AUTO_COMMIT;
 
         for(var i=0, n=this.length; i<n; i++)
             this[i][label] = i + offset;
 
         this.index(label);
-
-        var columns = this.columns();
-        var index = columns.indexOf(label);
-
-        var left  = columns.splice(0, index);
-        var right = columns.splice(index+1, columns.length);
-
-        this.columns([label].concat(left, right));
 
         if(commit)
             this.commit();
@@ -1596,8 +1603,11 @@
             columns = target.columns();
             columns.forEach(function(col){
                 target[col] = Series.prototype.getprop(col, function(){
-                    columns = factory(this, col);
-                    return Series.from([...columns]);
+                    var values = factory(this, col);
+                    var series = Series.from([...values]);
+                    var _proto = Object.create(proto);
+                    Object.setPrototypeOf(series, _proto);
+                    return series;
                 });
             });
             return target[name];
