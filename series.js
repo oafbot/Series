@@ -259,7 +259,7 @@
         };
 
         if(index!==undefined){
-            series.index(index);
+            series.index = index;
         }
         else if(typeof data._index!=='undefined'){
             console.log(data._index);
@@ -695,6 +695,20 @@
         return this.filter(dupes);
     };
 
+    Series.prototype.commit = function(){
+        var proto;
+        proto = Object.create(Object.getPrototypeOf(this));
+        delete proto._indexed;
+        Object.setPrototypeOf(this, proto);
+
+        proto._indexed  = Series.export(this, 'json');
+        proto._columns  = this.columns();
+
+        Object.setPrototypeOf(this, proto);
+
+        return this;
+    };
+
     Series.prototype.column = function(col){
            var column = Series.from([]);
            for(var i=0; i<this.length; i++){
@@ -733,7 +747,8 @@
             }
             proto._columns = new Series(cols);
             /* debating whether commits should be automatic */
-            if(Series.AUTO_COMMIT) this.commit();
+
+            if(AUTO_COMMIT) this.commit(this);
             return this;
         }
     };
@@ -754,26 +769,55 @@
         return this.sort(function(a, b){if(a[col] > b[col]) return 1; else if(a[col] < b[col]) return -1; return 0;});
     };
 
-    Series.prototype.index = function(column){
-        var proto = Object.getPrototypeOf(this);
-        if(typeof column!='undefined'){
+    Series.prototype.index = Series.prototype.getprop('index',
+        function(){
+            var proto = Object.getPrototypeOf(this);
+            return typeof proto._index != 'undefined' ? this.column(proto._index) : new Series([]);
+        },
+        function(column){
+            var proto,
+                index,
+                columns,
+                bound,
+                left,
+                right;
+
+            proto = Object.getPrototypeOf(this);
+
             proto = Object.create(proto);
             proto._index = column;
 
-            var columns = this.columns();
-            var index = columns.indexOf(column);
+            columns = this.columns();
+            index = columns.indexOf(column);
 
-            var left  = columns.splice(0, index);
-            var right = columns.splice(index+1, columns.length);
-
-            this.columns([column].concat(left, right));
+            left  = columns.splice(0, index);
+            right = columns.splice(index+1, columns.length);
+            bound = left.count > right.count ? left : right;
+            bound.columns.call(bound, [column].concat(left, right));
 
             Object.setPrototypeOf(this, proto);
-        }
-        else{
-            return typeof proto._index != 'undefined' ? this.column(proto._index) : Series.from([]);
-        }
-    };
+    });
+
+    // function(column){
+    //     var proto = Object.getPrototypeOf(this);
+    //     if(typeof column!='undefined'){
+    //         proto = Object.create(proto);
+    //         proto._index = column;
+
+    //         var columns = this.columns();
+    //         var index = columns.indexOf(column);
+
+    //         var left  = columns.splice(0, index);
+    //         var right = columns.splice(index+1, columns.length);
+
+    //         this.columns([column].concat(left, right));
+
+    //         Object.setPrototypeOf(this, proto);
+    //     }
+    //     else{
+    //         return typeof proto._index != 'undefined' ? this.column(proto._index) : Series.from([]);
+    //     }
+    // };
 
     Series.prototype.reindex = function(label, offset, commit){
         label  = typeof this._index!='undefined' ? this._index : label;
@@ -784,24 +828,10 @@
         for(var i=0, n=this.length; i<n; i++)
             this[i][label] = i + offset;
 
-        this.index(label);
+        this.index = label;
 
         if(commit)
             this.commit();
-        return this;
-    };
-
-    Series.prototype.commit = function(){
-        var proto;
-        proto = Object.create(Object.getPrototypeOf(this));
-        delete proto._indexed;
-        Object.setPrototypeOf(this, proto);
-
-        proto._indexed  = Series.export(this, 'json');
-        proto._columns  = this.columns();
-
-        Object.setPrototypeOf(this, proto);
-
         return this;
     };
 
@@ -1672,7 +1702,7 @@
         var row  = {};
         var cols = this.columns();
 
-        if(typeof this._index!='undefined' && this.index().is.numeric())
+        if(typeof this._index!='undefined' && this.index.is.numeric())
             values = [this.column(this._index).last(1).pop()+1].concat(values);
 
         if(values.length < cols.length)
