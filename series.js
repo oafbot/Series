@@ -11,6 +11,9 @@
         istype,
         colnums,
         extend,
+        rebase,
+        inherit,
+        getproto,
         namespace,
 
         Series,
@@ -40,10 +43,38 @@
         return result;
     };
 
-    inherit = function(_new_, _base_){
+    rebase = function(_base_){
+        return Object.assign(BaseSeries.prototype, getproto(_base_));
+    };
+
+    getproto = function(_base_){
+        var _index, _indexed, _columns;
         var proto = Object.getPrototypeOf(_base_);
+
+        _index   = _base_._index;
+        _indexed = _base_._indexed;
+        _columns = _base_._columns;
+
+        if(proto instanceof BaseSeries)
+            while(proto instanceof BaseSeries){
+                proto = Object.getPrototypeOf(proto);
+            }
+
+        if(_index!==undefined)
+            proto._index = _index;
+        if(_indexed!==undefined && _indexed!="[]")
+            proto._indexed = _indexed;
+        if(_columns!==undefined && _columns.length>0)
+            proto._columns = _columns;
+
+        return proto;
+    };
+
+    inherit = function(_new_, _base_){
+        var proto = rebase(_base_);
+
         if(proto._index!==undefined)
-            Object.setPrototypeOf(_new_, Object.create(proto));
+            Object.setPrototypeOf(_new_, proto);
         return _new_;
     };
 
@@ -156,8 +187,16 @@
     };
 
     SeriesDataException = function SeriesDataException(message, name, code){
+        /*
+        *   Range Error       0
+        *   Reference Error   10
+        *   Syntax Error      20
+        *   Type Error        30
+        *   URI Error         40
+        */
+
         this.message = message;
-        this.code = 1;
+        this.code = 0;
         this.name = !name ? 'SeriesDataException' : name;
         console.error(this.name +": "+ this.message);
     };
@@ -189,20 +228,6 @@
                 columns.forEach(function(col){
                     this[col] = series.getprop(col, function(){ return this.col[col]; });
                 });
-
-            // if(AUTO_INDEX===true){
-            //     if(arguments[0] instanceof Series || arguments[0] instanceof Array){
-            //         //series.reindex(INDEX_LABEL, INDEX_OFFSET, false);
-            //     }
-            //     else if((arguments[0] instanceof Series || arguments[0] instanceof Array ) &&
-            //            !Object.getPrototypeOf(arguments[0]).hasOwnProperty('_indexed')){
-
-            //         //proto = Object.create(Object.getPrototypeOf(series));
-            //         //proto._indexed = Series.export(series, 'json');
-
-            //         //Object.setPrototypeOf(series, proto);
-            //     }
-            // }
         }
         return series;
     };
@@ -252,26 +277,20 @@
 
         series = new Series(data);
 
-        assign = function(_new_, _base_){
-            proto = Object.create(Object.getPrototypeOf(_base_));
-            proto._index = _base_._index;
-            Object.setPrototypeOf(_new_, proto);
-        };
-
         if(index!==undefined){
             series.index = index;
         }
         else if(typeof data._index!=='undefined'){
             console.log(data._index);
-            assign(series, data);
+            inherit(series, data);
         }
         else if(AUTO_INDEX){
-            if(series._index)
-            series.reindex();
+            if(series._index!==undefined)
+                series.reindex();
         }
 
         if(AUTO_COMMIT)
-            series.commit();
+           series.commit();
 
         return series;
     };
@@ -412,8 +431,11 @@
         var promise,
             xhttp,
             resolve = fn,
-            reject = console.trace,
-            status = true;
+            status = true,
+            reject = function(){
+                try{ throw new SeriesDataException('Data failed to load.', 'Async Load: URI Error', 40); }
+                catch(e){ console.trace(); }
+            };
 
         function ajax(){
             var text1  = "Resource loaded as: ";
@@ -696,16 +718,17 @@
     };
 
     Series.prototype.commit = function(){
-        var proto;
-        proto = Object.create(Object.getPrototypeOf(this));
-        delete proto._indexed;
-        Object.setPrototypeOf(this, proto);
+        var proto, columns;
 
-        proto._indexed  = Series.export(this, 'json');
-        proto._columns  = this.columns();
+        if(this.length){
+            proto = rebase(this);
+            columns = this.columns();
 
-        Object.setPrototypeOf(this, proto);
+            proto._indexed = this.length    > 0 ? Series.export(this, 'json') : undefined;
+            proto._columns = columns.length > 0 ? columns : undefined;
 
+            Object.setPrototypeOf(this, proto);
+        }
         return this;
     };
 
@@ -730,7 +753,8 @@
                 _columns = _columns.concat(this[i]!==null && this[i]!==undefined ? Object.keys(this[i]) : this[i]);
 
             _columns = _columns.unique();
-            proto._columns = _columns;
+            if(_columns.length)
+                proto._columns = _columns;
             return _columns;
         }
         else{
@@ -782,10 +806,10 @@
                 left,
                 right;
 
-            proto = Object.getPrototypeOf(this);
-
-            proto = Object.create(proto);
-            proto._index = column;
+            proto = getproto(this);
+            //proto = Object.create(proto);
+            if(column)
+                proto._index = column;
 
             columns = this.columns();
             index = columns.indexOf(column);
@@ -798,27 +822,6 @@
             Object.setPrototypeOf(this, proto);
     });
 
-    // function(column){
-    //     var proto = Object.getPrototypeOf(this);
-    //     if(typeof column!='undefined'){
-    //         proto = Object.create(proto);
-    //         proto._index = column;
-
-    //         var columns = this.columns();
-    //         var index = columns.indexOf(column);
-
-    //         var left  = columns.splice(0, index);
-    //         var right = columns.splice(index+1, columns.length);
-
-    //         this.columns([column].concat(left, right));
-
-    //         Object.setPrototypeOf(this, proto);
-    //     }
-    //     else{
-    //         return typeof proto._index != 'undefined' ? this.column(proto._index) : Series.from([]);
-    //     }
-    // };
-
     Series.prototype.reindex = function(label, offset, commit){
         label  = typeof this._index!='undefined' ? this._index : label;
         label  = typeof label !='undefined' ? label  : INDEX_LABEL;
@@ -826,7 +829,8 @@
         commit = typeof commit!='undefined' ? commit : AUTO_COMMIT;
 
         for(var i=0, n=this.length; i<n; i++)
-            this[i][label] = i + offset;
+            if(this[i]!==null&&this[i]!==undefined)
+                this[i][label] = i + offset;
 
         this.index = label;
 
@@ -840,11 +844,11 @@
         if(proto.hasOwnProperty('_indexed'))
             return Series.from(proto._indexed);
         try{
-            throw new SeriesDataException("No primal form of this dataset was found in the prototype chain. To create an indexed copy, call Series.prototype.commit, or call Series.prototype.reindex with the commit flag set to true.", "Indexed copy not found");
+            throw new SeriesDataException("Primal form does not exist. The prototype chain does not contain a cached copy of the original dataset. To create a copy, call Series.prototype.commit.", "Schema: Reference Error", 10);
         }
         catch(e){
             return this;
-        };
+        }
     };
 
     Series.prototype.top = function(limit){
@@ -1336,19 +1340,19 @@
         if(operator && typeof operator=='string'){
             if(typeof right!='undefined' && typeof left!='undefined')
                 return evaluate({left:left, right:right, operator:operator});
-            else try{throw new SeriesDataException('Cannot evaluate statement. Malformed syntax.');}catch(e){}
+            else try{throw new SeriesDataException('Cannot evaluate statement. Malformed syntax.', 'Query: Syntax Error', 20);}catch(e){}
         }
         else if(typeof left=='string' && isStatement(left)){
             statement = tokenize(left);
             return evaluate(statement);
         }
-        else try{throw new SeriesDataException('Cannot evaluate statement. Malformed syntax.');}catch(e){}
+        else try{throw new SeriesDataException('Cannot evaluate statement. Malformed syntax.', 'Query: Syntax Error', 20);}catch(e){}
     };
 
     Series.prototype.get = function(){
         var selected = this.where(...arguments);
         if(selected.length>1)
-            try{ throw SeriesDataException("Multiple entries were found for the given query.", "Parameter Error", 3); }catch(e){}
+            try{ throw SeriesDataException("Multiple entries were found for the given query.", "Parameter: Range Error", 0); }catch(e){}
         return selected[0];
     };
 
@@ -1432,10 +1436,10 @@
             }
             else{
                 if(left.columns().indexOf(on)<0 || right.columns().indexOf(on)<0)
-                    try{throw new SeriesDataException("Datasets cannot be merged on specified column: \"" + on + "\". Column not found.", 'Merge Error', 2);}catch(e){}
+                    try{throw new SeriesDataException("Datasets cannot be merged on specified column: \"" + on + "\". Column not found.", 'Merge: Type Error', 30);}catch(e){}
 
                 else if(left.column(on).duplicates().length>0 || right.column(on).duplicates().length>0)
-                    try{throw new SeriesDataException("Datasets cannot be merged on specified column: \"" + on + "\". Index values must be unique.", 'Merge Error', 3);}catch(e){}
+                    try{throw new SeriesDataException("Datasets cannot be merged on specified column: \"" + on + "\". Index values must be unique.", 'Merge: Range Error', 3);}catch(e){}
 
                 else{
                     unique = Series.from([]);
@@ -1628,15 +1632,14 @@
 
         var getter = function(target, name, receiver){
             var columns, proto;
-            proto = Object.getPrototypeOf(target);
+            proto = getproto(target);
 
             columns = target.columns();
             columns.forEach(function(col){
                 target[col] = Series.prototype.getprop(col, function(){
                     var values = factory(this, col);
-                    var series = Series.from([...values]);
-                    var _proto = Object.create(proto);
-                    Object.setPrototypeOf(series, _proto);
+                    var series = new Series([...values]);
+                    Object.setPrototypeOf(series, rebase(proto));
                     return series;
                 });
             });
@@ -1707,7 +1710,7 @@
 
         if(values.length < cols.length)
             try{
-                throw new SeriesDataException("The number of values given do not match the number of columns.", "Range Error");
+                throw new SeriesDataException("The number of values given do not match the number of columns.", "Parameter: Range Error");
             }
             catch(e){}
 
