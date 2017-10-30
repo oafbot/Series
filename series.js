@@ -4,7 +4,7 @@
         exports     = typeof module!='undefined' ? module.exports : {},
 
         AUTO_INDEX   = true,
-        AUTO_COMMIT  = true,
+        AUTO_COMMIT  = false,
         INDEX_LABEL  = "_",
         INDEX_OFFSET = 0,
 
@@ -19,6 +19,7 @@
         Series,
         Promote,
         BaseSeries,
+        DataSeries,
         SeriesDataException;
 
     istype = function(obj){
@@ -44,7 +45,7 @@
     };
 
     rebase = function(_base_){
-        return Object.assign(BaseSeries.prototype, getproto(_base_));
+        return Object.assign(Series.prototype, getproto(_base_));
     };
 
     getproto = function(_base_){
@@ -62,7 +63,7 @@
 
         if(_index!==undefined)
             proto._index = _index;
-        if(_indexed!==undefined && _indexed!="[]")
+        if(_indexed!==undefined)
             proto._indexed = _indexed;
         if(_columns!==undefined && _columns.length>0)
             proto._columns = _columns;
@@ -94,6 +95,35 @@
         //if(context===global)
         //    throw new ReferenceError("Invalid parameter for variable assignment.");
         return {path:context, name:name};
+    };
+
+    applicable = function(fn){
+        var result, proto, options;
+        options = {};
+        return function(){
+            options = fn.call(fn, options, ...arguments);
+            result  = options.value;
+
+            if(result instanceof Series){
+                proto = Object.assign(Series.prototype, Object.getPrototypeOf(result));
+                proto.apply = function(column){
+                    column = column===undefined ? options.column : column;
+                    if(column!==undefined)
+                        options.data.map(function(row, index){
+                            row[column] = options.value[index];
+                            return row;
+                        });
+                    else
+                        options.data.map(function(item, index){
+                            item = options.value[index];
+                            return item;
+                        });
+                    Object.setPrototypeOf(result, proto);
+                    return result;
+                };
+            }
+            return result;
+        }.bind(options);
     };
 
     Promote = function(a, d){
@@ -232,11 +262,6 @@
         return series;
     };
 
-    Series.AUTO_INDEX   = AUTO_INDEX;
-    Series.INDEX_LABEL  = INDEX_LABEL;
-    Series.INDEX_OFFSET = INDEX_OFFSET;
-    Series.AUTO_COMMIT  = AUTO_COMMIT;
-
     Series.prototype = new Series();
     Series.prototype.constructor = Series;
     Series.prototype.constructor.prototype = BaseSeries.prototype;
@@ -270,10 +295,15 @@
     Series.prototype.splice      = function(){ return extend.call(this, Array.prototype.splice,      arguments); };
     Series.prototype.unshift     = function(){ return extend.call(this, Array.prototype.unshift,     arguments); };
 
-    SeriesFactory = function(data, index){
-        var proto,
-            assign,
-            series;
+    /* Environment Flags */
+    Series.AUTO_INDEX   = AUTO_INDEX;
+    Series.INDEX_LABEL  = INDEX_LABEL;
+    Series.INDEX_OFFSET = INDEX_OFFSET;
+    Series.AUTO_COMMIT  = AUTO_COMMIT;
+
+    /* Factory method to be exposed to the outside */
+    DataSeries = function DataSeries(data, index){
+        var proto, series;
 
         series = new Series(data);
 
@@ -281,7 +311,6 @@
             series.index = index;
         }
         else if(typeof data._index!=='undefined'){
-            console.log(data._index);
             inherit(series, data);
         }
         else if(AUTO_INDEX){
@@ -292,10 +321,19 @@
         if(AUTO_COMMIT)
            series.commit();
 
+        Object.setPrototypeOf(series, DataSeries.prototype);
         return series;
     };
+    DataSeries.prototype = Series.prototype;
+    DataSeries.toString = function(){ return "DataSeries() { return  Series; }"; };
 
-    Series.from = function(data, done){
+    Series.factory = DataSeries;
+    Series.new     = DataSeries;
+
+    /* Static Methods */
+    Series.flat = function(data){ return new Series(data); };
+
+    Series.from = function(data, options){
         var series, columns, rows, check;
 
         if(data instanceof Array){
@@ -316,9 +354,9 @@
                         return row;
                     })());
                 });
-                return SeriesFactory(series);
+                return Series.factory(series);
             }
-            return SeriesFactory(data);
+            return Series.factory(data);
         }
         else if(typeof data=='string'){
             if(data.split('.').pop()=='csv'){
@@ -345,7 +383,7 @@
                     row[columns[c]] = data.rows[i][c];
                 series.push(row);
             }
-            return SeriesFactory(series);
+            return Series.factory(series);
         }
     };
 
@@ -528,6 +566,16 @@
         return Series.from(empty(num));
     };
 
+    var dynamic = function(target, property, getter, setter){
+        Object.defineProperty(target, property, {
+            get: getter,
+            set: setter===undefined ?
+                 function( ){ property = getter.call(this); } :
+                 function(v){ property = setter.call(this, v); },
+            configurable: true
+        });
+    };
+
     Series.prototype.getprop = (function(prop, getter, setter){
         Object.defineProperty(Series.prototype, prop, {
             get: getter,
@@ -538,11 +586,116 @@
         });
     }).bind(Series.prototype);
 
+
     var is = function is(series){ this.series = series; };
     var to = function to(series){ this.series = series; };
 
+    var datetime   = function datetime(series)  { this.series = series; this.date = Object.create(Date); };
+    var string = function string(series){ this.series = series; };
+
+    var timeunit = function(unit){
+        return function(date){
+            var self = this;
+            this.date = date;
+            this.series = date.series;
+            this.unit = unit;
+            this.units = date.units;
+
+            this.convert = function(input, precision){
+                var value,
+                    proto,
+                    output = {},
+                    units = Object.keys(this.units),
+                    stringout = "",
+
+                precision = precision!==undefined ? precision : this.unit;
+                precision = precision=='mixed' || precision=='full' ? units.length : units.indexOf(precision)+1;
+
+                for(var i=0; i<precision; i++ ){
+                    value = Math.floor(input / this.units[units[i]]);
+                    output[units[i]+'s'] = value;
+                    input = input % this.units[units[i]];
+                    stringout += value + " "  + units[i]+'s';
+                    if(i<precision-2)
+                        stringout += ", ";
+                    if(i==precision-2)
+                        stringout += ", and ";
+                }
+                proto = Object.getPrototypeOf(output);
+                proto.toString = function(){ return stringout; };
+                Object.setPrototypeOf(output, proto);
+                return output;
+            };
+
+            this.between = applicable(function(options){
+                var calc, args = arguments;
+
+                calc = function(t1, t2){
+                    var diff;
+                    if(typeof t1=='string' || t1 instanceof String)
+                        t1 = Date.parse(t1);
+                    if(typeof t2=='string' || t2 instanceof String)
+                        t2 = Date.parse(t2);
+                        diff = Math.abs(t1-t2);
+                    return Math.floor(diff / self.units[unit]);
+                };
+
+                if((typeof args[1]=='string' || args[1] instanceof String) && self.series.columns().has(args[1]) ){
+                    options.data = self.series;
+                    options.column = args[1];
+                    options.value = Series.flat([]);
+
+                    options.data.forEach(function(row){ options.value.push(calc(row[args[1]], args[2])); });
+                }
+                else if(args[1] instanceof Array){
+                    options.data = args[1];
+                    options.value = Series.flat([]);
+
+                    options.data.forEach(function(item){ options.value.push(calc(item, args[2])); });
+                }
+                else if(arguments.length>1){
+                    options.value = calc(args[1], args[2]);
+                }
+                return options;
+            });
+
+            this.since = function(t1){
+                t1 = t1!==undefined ? t1 : 0;
+                var t2 = Date.now();
+                return this.between(t1, t2);
+            };
+
+            this.add = function(){
+
+            };
+
+            this.sub = function(){
+
+            };
+        };
+    };
+
+    var years   = timeunit('year');
+    var months  = timeunit('month');
+    var weeks   = timeunit('day');
+    var days    = timeunit('day');
+    var hours   = timeunit('hour');
+    var seconds = timeunit('second');
+    var mixed   = timeunit('mixed');
+
     is.prototype = new is(Series.prototype);
     to.prototype = new to(Series.prototype);
+
+    datetime.prototype = new datetime(Series.prototype);
+    string.prototype = new string(Series.prototype);
+
+    years.prototype   = new years(datetime.prototype);
+    months.prototype  = new months(datetime.prototype);
+    weeks.prototype   = new weeks(datetime.prototype);
+    days.prototype    = new days(datetime.prototype);
+    hours.prototype   = new hours(datetime.prototype);
+    seconds.prototype = new seconds(datetime.prototype);
+    mixed.prototype   = new mixed(datetime.prototype);
 
     is.prototype.boolean = function(col){
         var i, char, check;
@@ -649,6 +802,92 @@
     Series.prototype.is = Series.prototype.getprop('is', function(){ return new is(this); });
     Series.prototype.to = Series.prototype.getprop('to', function(){ return new to(this); });
 
+    string.prototype.upper =
+    string.prototype.allcaps = function(column){
+
+    };
+
+    string.prototype.lower = function(column){
+
+    };
+
+    string.prototype.title = function(){
+
+    };
+
+    string.prototype.ucfirst= function(){
+
+    };
+
+    datetime.prototype.units = {
+        year   : 24*60*60*365*1000,
+        month  : 24*60*60*30*1000,
+        week   : 24*60*60*7*1000,
+        day    : 24*60*60*1000,
+        hour   : 60*60*1000,
+        minute : 60*1000,
+        second : 1000,
+        milliseconds : 1
+    };
+
+    datetime.prototype.format = function(){};
+    datetime.prototype.unix = function(){};
+    datetime.prototype.parse = function(){};
+    datetime.prototype.long = function(){};
+    datetime.prototype.short = function(){};
+    datetime.prototype.convert = function(){};
+
+    datetime.prototype.between = function(){
+        var calc, args = arguments;
+
+        calc = function(t1, t2){
+            var diff;
+            if(typeof t1=='string' || t1 instanceof String)
+                t1 = Date.parse(t1);
+            if(typeof t2=='string' || t2 instanceof String)
+                t2 = Date.parse(t2);
+                diff = Math.abs(t1-t2);
+            return Math.floor(diff);
+        };
+
+        return calc(args[0], args[1]);
+    };
+
+    datetime.prototype.since = function(t){
+        t = t!==undefined ? t : 0;
+        return this.between(t, Date.now());
+    };
+
+    datetime.prototype.random = function(min, max, column, format){
+        if(typeof min=='string' || min instanceof String)
+            min = Date.parse(min);
+        if(typeof max=='string' || max instanceof String)
+            max = Date.parse(max);
+
+        this.series.apply(function(row){
+            var fn     = function(){ return Math.floor(Math.random() * (max - min + 1)) + min; };
+            var options = { /*weekday: 'long', */ year: 'numeric', month:'long', day:'numeric' };
+            var value = format!==undefined ? function(){ return new Date(fn()).toLocaleString('en-US', options); } : function(){ return fn(); };
+
+            if(column) row[column] = value(); else row = value();
+            return row;
+        });
+        return this.series;
+    };
+
+    datetime.prototype.years   = dynamic(datetime.prototype, 'years',   function(){ return new years(this);   });
+    datetime.prototype.months  = dynamic(datetime.prototype, 'months',  function(){ return new months(this);  });
+    datetime.prototype.days    = dynamic(datetime.prototype, 'days',    function(){ return new days(this);    });
+    datetime.prototype.hours   = dynamic(datetime.prototype, 'hours',   function(){ return new hours(this);   });
+    datetime.prototype.seconds = dynamic(datetime.prototype, 'seconds', function(){ return new seconds(this); });
+    datetime.prototype.mixed   = dynamic(datetime.prototype, 'mixed',   function(){ return new mixed(this);   });
+
+    Series.prototype.datetime   = Series.prototype.getprop('datetime', function(){ return new datetime(this); });
+    Series.prototype.string = Series.prototype.getprop('string', function(){ return new string(this); });
+
+
+    /* Series Object Methods */
+
     Series.prototype.typeof = function(){
         if(arguments.length<1)
             return istype(this);
@@ -740,14 +979,14 @@
            return column;
     };
 
-    Series.prototype.columns = function(cols){
+    Series.prototype.columns = function(cols, commit){
         /* note: a Series.from() call made from within
                 this method will result in infinite recursion!!
         */
         var proto = Object.getPrototypeOf(this);
         var _columns;
         if(cols===undefined){
-            _columns = new Series([]);
+            _columns = Series.flat([]);
 
             for(var i=0, n=this.length; i<n; i++)
                 _columns = _columns.concat(this[i]!==null && this[i]!==undefined ? Object.keys(this[i]) : this[i]);
@@ -761,6 +1000,8 @@
             var c, row;
             var table = this.clone();
 
+            commit = commit!==undefined ? commit : true;
+
             while (this.length){ this.pop(); }
 
             for(row=0; row<table.length; row++){
@@ -769,10 +1010,10 @@
                 for(c=0; c<cols.length; c++)
                     this[row][cols[c]] = table[row][cols[c]];
             }
-            proto._columns = new Series(cols);
+            proto._columns = Series.flat(cols);
             /* debating whether commits should be automatic */
 
-            if(AUTO_COMMIT) this.commit(this);
+            if(AUTO_COMMIT && commit) this.commit(this);
             return this;
         }
     };
@@ -796,7 +1037,7 @@
     Series.prototype.index = Series.prototype.getprop('index',
         function(){
             var proto = Object.getPrototypeOf(this);
-            return typeof proto._index != 'undefined' ? this.column(proto._index) : new Series([]);
+            return typeof proto._index != 'undefined' ? this.column(proto._index) : Series.flat([]);
         },
         function(column){
             var proto,
@@ -920,9 +1161,13 @@
 
     Series.prototype.apply = function(lambda){
         var self = this;
-        return self.map(function(row, index, series){
-            return lambda.call(self, row, index, series);
-        });
+        if(typeof lambda == 'function')
+            return self.map(function(row, index, series){
+                return lambda.call(self, row, index, series);
+            });
+        else if(lambda instanceof Array)
+            return self.map(function(item, index){ item = lambda[index]; return item; });
+        return self.map(function(item){ item = lamda; return item; });
     };
 
     Series.prototype.rename = function(o, n){
@@ -957,7 +1202,7 @@
                     copy[col] = row[col];
             return copy;
         });
-        selected.columns(args);
+        selected.columns(args, false);
         inherit(selected, this);
         return selected;
     };
@@ -1638,7 +1883,7 @@
             columns.forEach(function(col){
                 target[col] = Series.prototype.getprop(col, function(){
                     var values = factory(this, col);
-                    var series = new Series([...values]);
+                    var series = Series.flat([...values]);
                     Object.setPrototypeOf(series, rebase(proto));
                     return series;
                 });
@@ -1720,6 +1965,22 @@
         return this;
     };
 
+    Series.prototype.add = Series.prototype.getprop('add', function(){
+        var self = this;
+        return {
+            column : function(name, init){
+                self.map(function(row){row[name] = init!==undefined ? init : null; return row;});
+                self.col[name];
+                self.columns();
+                return self;
+            },
+            row : function(values, position){
+                values = values!==undefined ? values : new Array(self.columns().count).fill(null);
+                return self.insert(values, position);
+            }
+        };
+    });
+
     Series.prototype.all = function(condition){
         if(typeof condition=='function')
             return this.every(function(item){ return condition(item); });
@@ -1790,7 +2051,8 @@
             wrapped = [],
             cutoffs = [],
             selects = [],
-            columns = Series.from(['index'].concat(this.columns()));
+            _cols_  = this.columns();
+            columns = Series.flat(['index'].concat(_cols_));
             series  = this;
 
         repeat = function(length, char){
@@ -1841,11 +2103,11 @@
         columns.forEach(function(column, index){
             values = [];
             series.forEach(function(row, index){ values.push(column!='index' ? String(row[column]) : String(index)); });
-            longest = Series.from([column].concat(values)).longest().length;
+            longest = Series.flat([column].concat(values)).longest().length;
             max.push(longest);
         });
 
-        width = Series.from(max).sum() + spacer * columns.count;
+        width = Series.flat(max).sum() + spacer * columns.count;
 
         if(width > wrap){
             max.forEach(function(width, index){
@@ -1883,25 +2145,32 @@
             for(var i=0; i<wrapped.length; i++){
                 console.log("\n");
                 offset += i > 0 ? cutoffs[i-1].length : 0;
-                columns = Series.from(['index'].concat(cutoffs[i]));
+                columns = Series.flat(['index'].concat(cutoffs[i]));
                 display(wrapped[i], columns, offset);
             }
         }
         else{
             offset = 0;
-            columns = Series.from(['index'].concat(this.columns()));
+            columns = Series.flat(['index'].concat(_cols_));
             console.log("\n");
             display(series, columns, offset);
         }
-        return ["count", series.count];
+        return {count : series.count, index : series._index};
     };
 
     if(environment=='server'){
-        exports.Series = SeriesFactory;
+        exports.Series = Series;
         return exports;
     }
 
-    scope.Series = SeriesFactory;
-    return SeriesFactory;
+    scope.Series        = Series.factory;
+    scope.Series.new    = Series.new;
+    scope.Series.from   = Series.from;
+    scope.Series.empty  = Series.empty;
+    scope.Series.export = Series.export;
+    scope.Series.json   = Series.json;
+    scope.Series.csv    = Series.csv;
+    scope.Series.load   = Series.load;
+    return Series;
 
 }).call(this, typeof window=='undefined' ? global : window);
