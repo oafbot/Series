@@ -10,6 +10,7 @@
 
         istype,
         colnums,
+        dynamic,
         extend,
         rebase,
         inherit,
@@ -20,6 +21,7 @@
         Promote,
         BaseSeries,
         DataSeries,
+        DataColumn,
         SeriesDataException;
 
     istype = function(obj){
@@ -35,6 +37,16 @@
         for(var i=0; i<data.length; i++)
             max = (data[i].length > max) ? data[i].length : max;
         return Array.apply(null, Array(max)).map(function(e, i) {return i;});
+    };
+
+    dynamic = function(target, property, getter, setter){
+        Object.defineProperty(target, property, {
+            get: getter,
+            set: setter===undefined ?
+                 function( ){ property = getter.call(this); } :
+                 function(v){ property = setter.call(this, v); },
+            configurable: true
+        });
     };
 
     extend = function(fn, args){
@@ -56,8 +68,8 @@
         _indexed = _base_._indexed;
         _columns = _base_._columns;
 
-        if(proto instanceof BaseSeries)
-            while(proto instanceof BaseSeries){
+        if(proto instanceof Series)
+            while(proto instanceof Series){
                 proto = Object.getPrototypeOf(proto);
             }
 
@@ -73,8 +85,7 @@
 
     inherit = function(_new_, _base_){
         var proto = rebase(_base_);
-
-        if(proto._index!==undefined)
+        //if(proto._index!==undefined)
             Object.setPrototypeOf(_new_, proto);
         return _new_;
     };
@@ -241,7 +252,7 @@
 
         return series;
     };
-    BaseSeries.prototype = new Array();
+    BaseSeries.prototype = Object.create(Array.prototype);
 
     Series = function Series(){
         var series, row, columns, self, proto;
@@ -249,20 +260,10 @@
         series = new BaseSeries(arguments[0]);
 
         Object.setPrototypeOf(series, Series.prototype);
-
-        row = series[0];
-        if( row instanceof Object && !(row instanceof Series) ){
-            columns = series.columns();
-
-            if(this.col !== undefined )
-                columns.forEach(function(col){
-                    this[col] = series.getprop(col, function(){ return this.col[col]; });
-                });
-        }
         return series;
     };
 
-    Series.prototype = new Series();
+    Series.prototype = BaseSeries.prototype;
     Series.prototype.constructor = Series;
     Series.prototype.constructor.prototype = BaseSeries.prototype;
     Series.prototype.toString = function(){return '[object Series]';};
@@ -303,9 +304,10 @@
 
     /* Factory method to be exposed to the outside */
     DataSeries = function DataSeries(data, index){
-        var proto, series;
-
+        var proto, series, columns, row;
         series = new Series(data);
+        Object.setPrototypeOf(series, Object.create(DataSeries.prototype));
+            
 
         if(index!==undefined){
             series.index = index;
@@ -321,19 +323,123 @@
         if(AUTO_COMMIT)
            series.commit();
 
-        Object.setPrototypeOf(series, DataSeries.prototype);
+        proto = Object.getPrototypeOf(series);
+        if(series.length && !series.is.column()){
+            columns = series.columns();
+
+            columns.forEach(function(col){
+                proto.col[col] = series.getprop(col, function(){ return this.col[col]; });
+                // proto.col = dynamic(series, 'col', function(){
+                //     var series = this;
+
+                //     var factory = function(series, c){
+                //         var column = {};
+                //         column[Symbol.iterator] = function*(){
+                //             for(var i=0, n=series.length; i<n; i++)
+                //                 yield series[i][c];
+                //         };
+                //         return column;
+                //     };
+
+                //     var setter = function(target, name, value, receiver){
+                //         var columns;
+
+                //         if(typeof value!=='undefined' && value instanceof Array)
+                //             target.map(function(row, index){ row[name] = value[index]; return row; });
+                //         else if(typeof value!=='undefined')
+                //             target.map(function(row, index){ row[name] = value; return row; });
+                //     };
+
+                //     var getter = function(target, name, receiver){
+                //         var columns, proto;
+                //         columns = target.columns();
+                //         columns.forEach(function(col){
+                //             target[col] = dynamic.call(target, col, function(){
+                //                 var values = factory(this, col);
+                //                 var series = Series.column([...values], name, target);
+                //                 //var proto = getproto(this);
+                //                 //Object.setPrototypeOf(series, proto);
+                //                 return series;
+                //             });
+                //         });
+                //         return target[name];
+                //     };
+                //     var proxy = new Proxy(series, { get: getter, set: setter });
+                //     return proxy;
+                // });
+            });
+            Object.setPrototypeOf(series, Object.create(proto));
+        }
+
         return series;
     };
+
     DataSeries.prototype = Series.prototype;
     DataSeries.toString = function(){ return "DataSeries() { return  Series; }"; };
 
     Series.factory = DataSeries;
     Series.new     = DataSeries;
 
+    DataColumn = function DataColumn(data, name, parent){
+        var self, proto, target;
+        if(data instanceof Series)
+            data = data.flatten();
+        self = new Series(data);
+
+        Object.setPrototypeOf(self, DataColumn.prototype);
+        proto  = Object.getPrototypeOf(self);
+
+        // delete proto.col;
+        proto._label  = name;
+        proto._parent = parent;
+        //proto._lambda = undefined;
+
+        // proto.lambda = function(lambda, persist){
+        //     if(lambda!==undefined){
+        //         proto._lambda = lambda;
+        //         self._parent.col[self._label] = self;
+        //         return self;
+        //     }
+        //     else return DataColumn.prototype._lambda;
+        // };
+
+        proto.apply = function(column){
+            if(self._lambda!==undefined){
+                if(typeof self._lambda=='function')
+                    self.map(function(item, index, series){ return self._lambda(item, index, series, self, self._label, self._parent);});
+                else if(self._lambda instanceof Array)
+                    self.map(function(item, index, series){ series[index] = self._lambda[index]; });
+                else
+                    self.map(function(item, index, series){ series[index] = self._lambda; });
+
+                if(column===undefined)
+                    self._parent.col[self._label] = self;
+                else if(column!==self._label)
+                    self._parent.col[column] = self;
+            }
+            else if(column!==undefined){
+                //self.map(function(item, index, series){ self._parent.col[column][index] = self[index]; });
+                self._parent.col[column] = self;
+                return self._parent.col[column];
+            }
+            //self._lambda = undefined;
+            return self;
+        };
+
+        Object.setPrototypeOf(self, proto);
+
+        return self;
+    };
+    DataColumn.prototype = new Series();
+    DataColumn.toString = function(){ return "DataColumn() { return  Series.Column; }"; };
+    Series.Column = DataColumn;
+
     /* Static Methods */
+    Series.column = function(data, name, parent){ return new DataColumn(data, name, parent); };
+
     Series.flat = function(data){ return new Series(data); };
 
-    Series.from = function(data, options){
+    Series.from = function(data, done){
         var series, columns, rows, check;
 
         if(data instanceof Array){
@@ -566,18 +672,8 @@
         return Series.from(empty(num));
     };
 
-    var dynamic = function(target, property, getter, setter){
-        Object.defineProperty(target, property, {
-            get: getter,
-            set: setter===undefined ?
-                 function( ){ property = getter.call(this); } :
-                 function(v){ property = setter.call(this, v); },
-            configurable: true
-        });
-    };
-
     Series.prototype.getprop = (function(prop, getter, setter){
-        Object.defineProperty(Series.prototype, prop, {
+        Object.defineProperty(this, prop, {
             get: getter,
             set: setter===undefined ?
                  function( ){ prop = this.getprop.call(this); } :
@@ -589,9 +685,169 @@
 
     var is = function is(series){ this.series = series; };
     var to = function to(series){ this.series = series; };
-
-    var datetime   = function datetime(series)  { this.series = series; this.date = Object.create(Date); };
     var string = function string(series){ this.series = series; };
+    var datetime = function datetime(series){
+        this.series = series;
+        this.datetime = Object.create(Date);
+        this.date;
+    };
+
+    is.prototype = new is(Series.prototype);
+    to.prototype = new to(Series.prototype);
+
+    is.prototype.boolean = function(col){
+        var i, char, check;
+
+        check = function(item){ return typeof item=='boolean' || item instanceof Boolean; };
+
+        if(col!==undefined)
+            return this.series.every(function(row){ return check(row[col]); });
+        return this.series.every(function(row){ return check(row); });
+    };
+
+    is.prototype.numeric = function(col){
+        if(this.series.count<=0)
+            return false;
+        if(col!==undefined){
+            return this.series.filter(function(row){
+                return !isNaN(parseFloat(row[col])) && isFinite(row[col]);
+            }).length > 0;
+        }
+        else{
+            return this.series.every(function(row){return !isNaN(parseFloat(row)) && isFinite(row);});
+        }
+    };
+
+    is.prototype.string = function(col){
+        var i, char, check;
+
+        if(this.series.count<=0)
+            return false;
+
+        check = function(item){ return typeof item=='string' || item instanceof String; };
+
+        if(col!==undefined)
+            return this.series.every(function(row){ return check(row[col]); });
+        return this.series.every(function(row){ return check(row); });
+    };
+
+    is.prototype.alphanumeric = function(col){
+        var i, char, check;
+
+        if(this.series.count<=0)
+            return false;
+
+        check = function(item){
+            if(typeof item=='number' || item instanceof Number)
+                return true;
+            else if(typeof item=='string' || item instanceof String){
+                for(i=0; i<item.length; i++){
+                    char = item.charCodeAt(i);
+                    if(!(char > 47 && char < 58) && // (0-9)
+                       !(char > 64 && char < 91) && // (A-Z)
+                       !(char > 96 && char < 123))  // (a-z)
+                       return false;
+                }
+                return true;
+            }
+            return false;
+        };
+
+        if(col!==undefined)
+            return this.series.every(function(row){ return check(row[col]); });
+        return this.series.every(function(row){ return check(row); });
+    };
+
+    is.prototype.empty = function(col){
+        var i, char, check;
+
+        if(this.series.count<=0)
+            return true;
+
+        check = function(item){
+            return(
+                item===null      ||
+                item===undefined ||
+                ( /^\s*$/.test(item) && (typeof item=='string' || item instanceof String )) ||
+                ( isNaN(item) && (typeof item=='number'        || item instanceof Number )) ||
+                ( item.length<1 && (item instanceof Array      || item instanceof Series )) ||
+                ( Object.keys(item).length===0 && item.constructor===Object              ));
+        };
+
+        if(col!==undefined)
+            return this.series.every(function(row){ return check(row[col]); });
+        return this.series.every(function(row){ return check(row); });
+    };
+
+    is.prototype.column = function(data){
+        data = data===undefined ? this.series : data;
+
+        if(data instanceof Series){
+            if(data instanceof DataColumn)
+                return true;
+            if(data.every( (item) => typeof item == 'object' && item!==null) ){
+                return false;
+            }
+            return true;
+        }
+        return false;
+    };
+
+    is.prototype.not = function(){
+        var self = this;
+
+        var series = this.series;
+        var getter = function(target, name){
+            //if(this.hasOwnProperty(name)){
+            return function(){ return !target.is[name]; };
+            //}
+            // else{
+            //     if(typeof name=='string')
+            //         return typeof this != name;
+            //     else return this !== name;
+            // }
+        };
+        return new Proxy(series, { get: getter });
+    }.call(is.prototype);
+
+    to.prototype.string = function(col){
+        if(col!==undefined)
+            return this.series.map(function(row){ row[col] = String(row[col]); return row;});
+        return this.series.map(function(item){ item = String(item); return item;});
+    };
+
+    to.prototype.number = function(col){
+        if(col!==undefined)
+            return this.series.map(function(row){ row[col] = Number(row[col]); return row;});
+        return this.series.map(function(item){ item = Number(item); return item;});
+    };
+
+    to.prototype.boolean = function(col){
+        if(col!==undefined)
+            return this.series.map(function(row){ row[col] = Boolean(row[col]); return row;});
+        return this.series.map(function(item){ item = Boolean(item); return item;});
+    };
+
+    string.prototype = new string(Series.prototype);
+
+    string.prototype.upper =
+    string.prototype.allcaps = function(column){
+        return this.series.map( (str) => str.toUpperCase() );
+    };
+
+    string.prototype.lower = function(column){
+        return this.series.map();
+    };
+
+    string.prototype.title = function(){
+        return this.series.map(function(){ str.replace(/\w\S*/g,
+            function(txt){ return txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase(); });
+        });
+    };
+
+    string.prototype.ucfirst= function(){
+        this.series.map(function(str){ return str.charAt(0).toUpperCase() + str.slice(1); });
+    };
 
     var timeunit = function(unit){
         return function(date){
@@ -683,12 +939,7 @@
     var seconds = timeunit('second');
     var mixed   = timeunit('mixed');
 
-    is.prototype = new is(Series.prototype);
-    to.prototype = new to(Series.prototype);
-
     datetime.prototype = new datetime(Series.prototype);
-    string.prototype = new string(Series.prototype);
-
     years.prototype   = new years(datetime.prototype);
     months.prototype  = new months(datetime.prototype);
     weeks.prototype   = new weeks(datetime.prototype);
@@ -696,128 +947,6 @@
     hours.prototype   = new hours(datetime.prototype);
     seconds.prototype = new seconds(datetime.prototype);
     mixed.prototype   = new mixed(datetime.prototype);
-
-    is.prototype.boolean = function(col){
-        var i, char, check;
-
-        check = function(item){ return typeof item=='boolean' || item instanceof Boolean; };
-
-        if(col!==undefined)
-            return this.series.every(function(row){ return check(row[col]); });
-        return this.series.every(function(row){ return check(row); });
-    };
-
-    is.prototype.numeric = function(col){
-        if(this.series.count<=0)
-            return false;
-        if(col!==undefined){
-            return this.series.filter(function(row){
-                return !isNaN(parseFloat(row[col])) && isFinite(row[col]);
-            }).length > 0;
-        }
-        else{
-            return this.series.every(function(row){return !isNaN(parseFloat(row)) && isFinite(row);});
-        }
-    };
-
-    is.prototype.string = function(col){
-        var i, char, check;
-
-        if(this.series.count<=0)
-            return false;
-
-        check = function(item){ return typeof item=='string' || item instanceof String; };
-
-        if(col!==undefined)
-            return this.series.every(function(row){ return check(row[col]); });
-        return this.series.every(function(row){ return check(row); });
-    };
-
-    is.prototype.alphanumeric = function(col){
-        var i, char, check;
-
-        if(this.series.count<=0)
-            return false;
-
-        check = function(item){
-            if(typeof item=='number' || item instanceof Number)
-                return true;
-            else if(typeof item=='string' || item instanceof String){
-                for(i=0; i<item.length; i++){
-                    char = item.charCodeAt(i);
-                    if(!(char > 47 && char < 58) && // (0-9)
-                       !(char > 64 && char < 91) && // (A-Z)
-                       !(char > 96 && char < 123))  // (a-z)
-                       return false;
-                }
-                return true;
-            }
-            return false;
-        };
-
-        if(col!==undefined)
-            return this.series.every(function(row){ return check(row[col]); });
-        return this.series.every(function(row){ return check(row); });
-    };
-
-    is.prototype.empty = function(col){
-        var i, char, check;
-
-        if(this.series.count<=0)
-            return true;
-
-        check = function(item){
-            return(
-                item===null      ||
-                item===undefined ||
-                ( /^\s*$/.test(item) && (typeof item=='string' || item instanceof String )) ||
-                ( isNaN(item) && (typeof item=='number'        || item instanceof Number )) ||
-                ( item.length<1 && (item instanceof Array      || item instanceof Series )) ||
-                ( Object.keys(item).length===0 && item.constructor===Object              ));
-        };
-
-        if(col!==undefined)
-            return this.series.every(function(row){ return check(row[col]); });
-        return this.series.every(function(row){ return check(row); });
-    };
-
-    to.prototype.string = function(col){
-        if(col!==undefined)
-            return this.series.map(function(row){ row[col] = String(row[col]); return row;});
-        return this.series.map(function(item){ item = String(item); return item;});
-    };
-
-    to.prototype.number = function(col){
-        if(col!==undefined)
-            return this.series.map(function(row){ row[col] = Number(row[col]); return row;});
-        return this.series.map(function(item){ item = Number(item); return item;});
-    };
-
-    to.prototype.boolean = function(col){
-        if(col!==undefined)
-            return this.series.map(function(row){ row[col] = Boolean(row[col]); return row;});
-        return this.series.map(function(item){ item = Boolean(item); return item;});
-    };
-
-    Series.prototype.is = Series.prototype.getprop('is', function(){ return new is(this); });
-    Series.prototype.to = Series.prototype.getprop('to', function(){ return new to(this); });
-
-    string.prototype.upper =
-    string.prototype.allcaps = function(column){
-
-    };
-
-    string.prototype.lower = function(column){
-
-    };
-
-    string.prototype.title = function(){
-
-    };
-
-    string.prototype.ucfirst= function(){
-
-    };
 
     datetime.prototype.units = {
         year   : 24*60*60*365*1000,
@@ -829,14 +958,284 @@
         second : 1000,
         milliseconds : 1
     };
+    datetime.prototype.years   = dynamic(datetime.prototype, 'years',   function(){ return new years(this);   });
+    datetime.prototype.months  = dynamic(datetime.prototype, 'months',  function(){ return new months(this);  });
+    datetime.prototype.days    = dynamic(datetime.prototype, 'days',    function(){ return new days(this);    });
+    datetime.prototype.hours   = dynamic(datetime.prototype, 'hours',   function(){ return new hours(this);   });
+    datetime.prototype.seconds = dynamic(datetime.prototype, 'seconds', function(){ return new seconds(this); });
+    datetime.prototype.mixed   = dynamic(datetime.prototype, 'mixed',   function(){ return new mixed(this);   });
 
-    datetime.prototype.format = function(){};
+
+    datetime.prototype.format = function(){
+        /*
+        * For implementation details of toLocaleDateString, goto:
+        * https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date/toLocaleDateString#Syntax
+        */
+        var date, format, reformat, options, locale, convert,
+            self = this;
+
+        reformat = function(_date_, format, options){
+            var date, weekday, year, month, datestring, timestring, tostring,
+                WeekdayString, MonthString, TimeString, DateString;
+
+            WeekdayString = function(){
+                this.long   = ["Sunday" , "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+                this.short  = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+                this.narrow = ["Su", "M", "T", "W ", "Th", "F", "Sa"];
+
+                this.get = function(format, date){ return this[format][date.getDay()]; };
+            };
+
+            MonthString = function(){
+                this.long   = ["January", "February", "March", "April", "May", "June", "July",
+                               "August", "September", "October", "November", "December"];
+                this.short  = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+                this.narrow = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
+                this.get = function(format, date){ return this[format][date.getMonth()]; };
+            };
+
+            DateString = function(){
+                var day, fix, num;
+                this.suffix = function(num){
+                    fix = ['st', 'nd', 'rd', 'th'];
+                    day = String(num).split('').pop();
+                    day = num>= 11 && num<=13 ? 4 : day;
+                    return fix[day>3 || day<1 ? 3 : day-1];
+                };
+
+                this.get = function(format, date){
+                    num = date.getDate();
+                    day = format=='long' ? num + this.suffix(num) : (num<10 && options.zero ? "0" + num : num) ;
+                    return day;
+                };
+            };
+
+            TimeString = function(){
+                this.get = function(format, date, precision){
+                    this.hour = date.getHours();
+                    this.min  = date.getMinutes();
+                    this.sec  = date.getSeconds();
+                    this.mil  = date.getMilliseconds();
+                    this.ampm = this.hour>12 ? "pm" : "am";
+                    this.reverted = this.hour>12 ? this.hour-12 : this.hour || 12;
+                    precision = precision===undefined ? 'minutes' : precision;
+                    this.string = "";
+
+                    var hour = format==24 && this.hour<10 ? "0" +  this.hour : this.hour,
+                        min = this.min<10 ? "0" + this.min : this.min,
+                        sec = this.sec<10 ? "0" + this.sec : this.sec,
+                        mil = this.mil<1000 ? function(ms){
+                        var len = 4 - String(ms).split('').length;
+                        for(var i=0; i<len; i++)
+                            ms = "0" + ms;
+                        return ms;
+                    }(this.mil) : this.mil;
+
+                    switch(precision){
+                        case 'hours':
+                            this.string = format==24 ? hour + " o'clock" : this.reverted + " " + this.ampm;
+                            break;
+                        case 'minutes':
+                            this.string = format==24 ? hour + ":" + min : this.reverted + ":" + min + " " + this.ampm;
+                            break;
+                        case 'seconds':
+                            this.string = format==24 ? hour + ":" + min + ":" + sec : this.reverted + ":" + min + ":" + sec + " " + this.ampm.toUpperCase();
+                            break;
+                        case 'milliseconds':
+                            this.string = format==24 ? hour + ":" + min + ":" + sec + ":" + mil : this.reverted + ":" + min + ":" + sec + ":" + mil + " " + this.ampm.toUpperCase();
+                            break;
+                    }
+                    return this.string;
+                };
+            };
+
+            tostring = function(date, options){
+                date  = new Date(date);
+                _date = "";
+
+                if(options.weekday)
+                    _date += weekday.get(options.weekday, date);
+                if(options.date){
+                    if(options.date!='narrow'){
+                        if(options.weekday)
+                            _date += ", ";
+                        _date +=  month.get(options.month, date);
+                        _date += " " + datestring.get(options.date, date);
+                        _date += (options.date=='long' ? ", "  : " ") + date.getFullYear();
+                    }
+                    else{
+                        if(options.weekday)
+                            _date = options.zero && options.weekday=='narrow' && _date.length<2 ? _date + "  " : _date + " ";
+                        _date += options.zero && date.getMonth()<9 ? "0" : "";
+                        _date += month.get(options.month, date);
+                        _date += options.delimiter + datestring.get(options.date, date);
+                        _date += options.delimiter + date.getFullYear();
+                    }
+                }
+                if(options.time){
+                    if(options.weekday || options.date)
+                        _date += ", ";
+                    _date += timestring.get(options.time, date, options.precision);
+                }
+                return _date;
+            };
+
+            weekday    = new WeekdayString();
+            month      = new MonthString();
+            datestring = new DateString();
+            timestring = new TimeString();
+
+            switch(format){
+                case 'full':
+                    /*Monday, October 30th, 2017, 11:05pm*/
+                    if(options===undefined){
+                        options = {};
+                        options.weekday = 'long';
+                        options.month   = 'long';
+                        options.date    = 'long';
+                        options.time    = 12;
+                    }
+                    else{
+                        options.weekday = options.hasOwnProperty('weekday') && !options.weekday ? false : 'long';
+                        options.month   = options.hasOwnProperty('date')    && !options.date    ? false : 'long';
+                        options.date    = options.hasOwnProperty('date')    && !options.date    ? false : 'long';
+                        options.time    = options.hasOwnProperty('time')    && !options.time    ? false : options.time || 12;
+                    }
+                    _date_ = tostring(_date_, options);
+                    break;
+                case 'abbrev':
+                    /*Mon, Oct 30 2017, 11:05pm*/
+                    if(options===undefined){
+                        options = {};
+                        options.weekday = 'short';
+                        options.month   = 'short';
+                        options.date    = 'short';
+                        options.time    = 12;
+                    }
+                    else{
+                        options.weekday = options.hasOwnProperty('weekday') && !options.weekday ? false : 'short';
+                        options.month   = options.hasOwnProperty('date')    && !options.date    ? false : 'short';
+                        options.date    = options.hasOwnProperty('date')    && !options.date    ? false : 'short';
+                        options.time    = options.hasOwnProperty('time')    && !options.time    ? false : options.time || 12;
+                    }
+                    _date_ = tostring(_date_, options);
+                    break;
+                case 'long':
+                    /*October 30th 2017*/
+                    options = options=== undefined ? {} : options;
+                    options.weekday = false;
+                    options.month   = 'long';
+                    options.date    = 'long';
+                    options.time    = false;
+                    _date_ = tostring(_date_, options);
+                    break;
+                case 'short':
+                    /* short M 10-30-2017 11:05pm */
+                    if(options===undefined){
+                        options = {};
+                        options.weekday = 'narrow';
+                        options.month   = 'narrow';
+                        options.date    = 'narrow';
+                        options.time    = 12;
+                        options.delimiter = "-";
+                    }
+                    else{
+                        options.weekday    = options.hasOwnProperty('weekday')   && !options.weekday   ? false : 'narrow';
+                        options.month      = options.hasOwnProperty('date')      && !options.date      ? false : 'narrow';
+                        options.date       = options.hasOwnProperty('date')      && !options.date      ? false : 'narrow';
+                        options.time       = options.hasOwnProperty('time')      && !options.time      ? false : options.time || 12;
+                        options.delimiter  = !options.hasOwnProperty('delimiter')|| !options.delimiter ? "-"   : options.delimiter;
+                    }
+                    _date_ = tostring(_date_, options);
+                    break;
+                case 'time':
+                    options = options=== undefined ? {} : options;
+                    options.weekday   = false;
+                    options.month     = false;
+                    options.date      = false;
+                    options.time      = options!==undefined && options.hasOwnProperty('time')      ? options.time      : 24;
+                    options.procision = options!==undefined && options.hasOwnProperty('precision') ? options.precision : 'seconds';
+                    _date_ = tostring(_date_, options);
+                    break;
+                default:
+                    locale = format && !locale ? format : locale;
+                    options = options=== undefined ? {} : options;
+                    options.weekday = options.weekend!==undefined ? options.weekend : 'long';
+                    options.year    = options.year   !==undefined ? options.year    : 'numeric';
+                    options.month   = options.month  !==undefined ? options.month   : 'long';
+                    options.day     = options.day    !==undefined ? options.day     : 'numeric';
+
+                    _date_ = convert(locale, options);
+                    break;
+                }
+            return _date_;
+        };
+
+        convert = function(_date_, locale, options){
+            if(_date_ instanceof Array){
+                _date_.map( (date) => new Date(date).toLocaleDateString(locale, options) );
+            }
+            else{
+                _date_ = new Date(_date_).toLocaleDateString(locale, options);
+            }
+            return _date_;
+        };
+
+        for(var a=0, n=arguments.length; a<n; a++){
+            if(typeof arguments[a] == 'number')
+                date = arguments[a];
+            else if(typeof arguments[a] == 'string' || typeof arguments[a] == 'function')
+                format = arguments[a];
+            else if(typeof arguments[a]=='object')
+                options = arguments[a];
+        }
+
+        this.date = date===undefined || date===null ? this.date : date;
+        this.date = this.date===undefined ? this.series : this.date;
+
+        if(options && options.locale!==undefined){
+            locale = options.locale;
+            delete options.locale;
+        }
+
+        if(format===undefined){
+            options = { weekday: 'long', year: 'numeric', month:'long', day:'numeric' };
+            if(this.date instanceof Array)
+                 this.date = this.date.map(function(date, index, series){ return new Date(date).toLocaleString('en-US', options); });
+            else this.date = new Date(this.date).toLocaleString('en-US', options);
+        }
+        else if(typeof format == 'function'){
+            if(this.date instanceof Array)
+                 this.date = this.date.map( (date) => format(date) );
+            else this.date = format(date);
+        }
+        else if(typeof format == 'string'){
+            if(this.date instanceof Array)
+                 this.date = this.date.map( (date) => reformat(date, format, options) );
+            else this.date = reformat(this.date, format, options);
+        }
+        else{
+            if(this.date instanceof Array)
+                 this.date = this.date.map( (date) => convert(date, format, options) );
+            else this.date = convert(this.date, format, options);
+        }
+
+        if(this.series instanceof DataColumn)
+           return this.series.lambda(this.date);
+        return this.date;
+    };
+
     datetime.prototype.unix = function(){};
+
     datetime.prototype.parse = function(){};
+
     datetime.prototype.long = function(){};
+
     datetime.prototype.short = function(){};
+
     datetime.prototype.convert = function(){};
 
+    datetime.prototype.delta =
     datetime.prototype.between = function(){
         var calc, args = arguments;
 
@@ -858,35 +1257,40 @@
         return this.between(t, Date.now());
     };
 
-    datetime.prototype.random = function(min, max, column, format){
+    datetime.prototype.random = function(min, max, column, format, options){
+        var self = this;
+        self.date = self.series;
+
         if(typeof min=='string' || min instanceof String)
             min = Date.parse(min);
         if(typeof max=='string' || max instanceof String)
             max = Date.parse(max);
 
-        this.series.apply(function(row){
-            var fn     = function(){ return Math.floor(Math.random() * (max - min + 1)) + min; };
-            var options = { /*weekday: 'long', */ year: 'numeric', month:'long', day:'numeric' };
-            var value = format!==undefined ? function(){ return new Date(fn()).toLocaleString('en-US', options); } : function(){ return fn(); };
+        var fn = function(){ return Math.floor(Math.random() * (max - min + 1)) + min; };
 
-            if(column) row[column] = value(); else row = value();
-            return row;
+        if(this.series.is.column())
+            column = column ? column : this.series._label;
+
+        var target = this.series.is.column() ? this.series._parent : this.series;
+
+        target = target.map(function(row, index, series){
+            var value = typeof format!='undefined' ? self.format.call(self, fn(), format, options) : fn();
+            if(column) series[index][column] = value; else series[index] = value;
+            return series[index];
         });
+
         return this.series;
     };
 
-    datetime.prototype.years   = dynamic(datetime.prototype, 'years',   function(){ return new years(this);   });
-    datetime.prototype.months  = dynamic(datetime.prototype, 'months',  function(){ return new months(this);  });
-    datetime.prototype.days    = dynamic(datetime.prototype, 'days',    function(){ return new days(this);    });
-    datetime.prototype.hours   = dynamic(datetime.prototype, 'hours',   function(){ return new hours(this);   });
-    datetime.prototype.seconds = dynamic(datetime.prototype, 'seconds', function(){ return new seconds(this); });
-    datetime.prototype.mixed   = dynamic(datetime.prototype, 'mixed',   function(){ return new mixed(this);   });
-
-    Series.prototype.datetime   = Series.prototype.getprop('datetime', function(){ return new datetime(this); });
+    Series.prototype.is = Series.prototype.getprop('is', function(){ return new is(this); });
+    Series.prototype.to = Series.prototype.getprop('to', function(){ return new to(this); });
     Series.prototype.string = Series.prototype.getprop('string', function(){ return new string(this); });
-
+    Series.prototype.datetime = Series.prototype.getprop('datetime', function(){ return new datetime(this); });
 
     /* Series Object Methods */
+    Series.prototype.flatten = function(){
+        return new Array([...this]);
+    };
 
     Series.prototype.typeof = function(){
         if(arguments.length<1)
@@ -972,19 +1376,21 @@
     };
 
     Series.prototype.column = function(col){
-           var column = Series.from([]);
+           var column = [];
            for(var i=0; i<this.length; i++){
               column.push(this[i][col]);
            }
-           return column;
+           return Series.column(column, col, this);
     };
 
     Series.prototype.columns = function(cols, commit){
         /* note: a Series.from() call made from within
                 this method will result in infinite recursion!!
         */
-        var proto = Object.getPrototypeOf(this);
-        var _columns;
+        var _columns, proto;
+        proto =  Object.getPrototypeOf(this);
+        //proto = proto instanceof Array && !(proto instanceof BaseSeries) ? this : proto;
+
         if(cols===undefined){
             _columns = Series.flat([]);
 
@@ -1159,16 +1565,24 @@
         return (series[lo] + series[hi]) / 2;
     };
 
-    Series.prototype.apply = function(lambda){
-        var self = this;
-        if(typeof lambda == 'function')
-            return self.map(function(row, index, series){
-                return lambda.call(self, row, index, series);
-            });
-        else if(lambda instanceof Array)
-            return self.map(function(item, index){ item = lambda[index]; return item; });
-        return self.map(function(item){ item = lamda; return item; });
+    Series.prototype.lambda = function(lambda){
+        if(lambda!==undefined){
+            Series.prototype._lambda = lambda;
+            return this;
+        }
+        else return this._lambda;
     };
+
+    // Series.prototype.apply = function(lambda){
+    //     var self = this;
+    //     if(typeof lambda == 'function')
+    //         return self.map(function(row, index, series){
+    //             return lambda.call(self, row, index, series);
+    //         });
+    //     else if(lambda instanceof Array)
+    //         return self.map(function(item, index){ item = lambda[index]; return item; });
+    //     return self.map(function(item){ item = lamda; return item; });
+    // };
 
     Series.prototype.rename = function(o, n){
         this.map(function(row){
@@ -1804,6 +2218,7 @@
             else{ /* default to full outer join */
                 merged = _join_(left, right);
             }
+            merged.columns();
             return merged;
         };
 
@@ -1877,14 +2292,13 @@
 
         var getter = function(target, name, receiver){
             var columns, proto;
-            proto = getproto(target);
-
             columns = target.columns();
             columns.forEach(function(col){
-                target[col] = Series.prototype.getprop(col, function(){
+                target[col] = target.getprop.call(target, col, function(){
                     var values = factory(this, col);
-                    var series = Series.flat([...values]);
-                    Object.setPrototypeOf(series, rebase(proto));
+                    var series = Series.column([...values], name, target);
+                    //var proto = getproto(this);
+                    //Object.setPrototypeOf(series, proto);
                     return series;
                 });
             });
@@ -1999,7 +2413,24 @@
         var row,
             table   = [],
             series  = this;
+
+        function Row(columns, values){
+            if(series instanceof DataColumn)
+                this[columns[0]] = values;
+            else if(series instanceof Series)
+                for(var c=0; c<columns.length; c++)
+                    this[columns[c]] = values[columns[c]];
+            else if(series instanceof Array)
+                    this[columns[0]] = values[0];
+            else this[columns[0]] = values;
+        }
+
+        if(series instanceof DataColumn)
+            columns = [series._label];
+        else if(series instanceof Series)
             columns = series.columns();
+        else if(series instanceof Array)
+            columns = ['values'];
 
         if(limit instanceof Array)
             series = series.row(limit);
@@ -2012,13 +2443,13 @@
             return series.tabular(wrap);
         }
 
-        function Row(columns, values){
-            for(var c=0; c<columns.length; c++)
-                this[columns[c]] = values[columns[c]];
-        }
-
         for(var i=0; i<series.length; i++){
-            row = new Row(columns, series[i]);
+            if(series instanceof Series){
+                var value = series[i];
+            }
+            else value = series[0];
+
+            row = new Row(columns, value);
             table.push(row);
         }
 
@@ -2171,6 +2602,9 @@
     scope.Series.json   = Series.json;
     scope.Series.csv    = Series.csv;
     scope.Series.load   = Series.load;
+    scope.Series.column = Series.column;
+    scope.Series.Column = Series.Column;
+    scope.Series.Base   = BaseSeries;
     return Series;
 
 }).call(this, typeof window=='undefined' ? global : window);
