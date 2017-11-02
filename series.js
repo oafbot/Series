@@ -7,6 +7,8 @@
         AUTO_COMMIT  = false,
         INDEX_LABEL  = "_",
         INDEX_OFFSET = 0,
+        AUTO_APPLY   = true,
+        DAY_ZERO     = -2208970800000, // new Date('JAN 1 1900') - new Date(0);
 
         istype,
         colnums,
@@ -301,13 +303,14 @@
     Series.INDEX_LABEL  = INDEX_LABEL;
     Series.INDEX_OFFSET = INDEX_OFFSET;
     Series.AUTO_COMMIT  = AUTO_COMMIT;
+    Series.AUTO_APPLY   = AUTO_APPLY;
+    Series.DAY_ZERO     = DAY_ZERO;
 
     /* Factory method to be exposed to the outside */
     DataSeries = function DataSeries(data, index){
         var proto, series, columns, row;
         series = new Series(data);
         Object.setPrototypeOf(series, Object.create(DataSeries.prototype));
-            
 
         if(index!==undefined){
             series.index = index;
@@ -329,44 +332,6 @@
 
             columns.forEach(function(col){
                 proto.col[col] = series.getprop(col, function(){ return this.col[col]; });
-                // proto.col = dynamic(series, 'col', function(){
-                //     var series = this;
-
-                //     var factory = function(series, c){
-                //         var column = {};
-                //         column[Symbol.iterator] = function*(){
-                //             for(var i=0, n=series.length; i<n; i++)
-                //                 yield series[i][c];
-                //         };
-                //         return column;
-                //     };
-
-                //     var setter = function(target, name, value, receiver){
-                //         var columns;
-
-                //         if(typeof value!=='undefined' && value instanceof Array)
-                //             target.map(function(row, index){ row[name] = value[index]; return row; });
-                //         else if(typeof value!=='undefined')
-                //             target.map(function(row, index){ row[name] = value; return row; });
-                //     };
-
-                //     var getter = function(target, name, receiver){
-                //         var columns, proto;
-                //         columns = target.columns();
-                //         columns.forEach(function(col){
-                //             target[col] = dynamic.call(target, col, function(){
-                //                 var values = factory(this, col);
-                //                 var series = Series.column([...values], name, target);
-                //                 //var proto = getproto(this);
-                //                 //Object.setPrototypeOf(series, proto);
-                //                 return series;
-                //             });
-                //         });
-                //         return target[name];
-                //     };
-                //     var proxy = new Proxy(series, { get: getter, set: setter });
-                //     return proxy;
-                // });
             });
             Object.setPrototypeOf(series, Object.create(proto));
         }
@@ -389,19 +354,9 @@
         Object.setPrototypeOf(self, DataColumn.prototype);
         proto  = Object.getPrototypeOf(self);
 
-        // delete proto.col;
+        delete proto.col;
         proto._label  = name;
         proto._parent = parent;
-        //proto._lambda = undefined;
-
-        // proto.lambda = function(lambda, persist){
-        //     if(lambda!==undefined){
-        //         proto._lambda = lambda;
-        //         self._parent.col[self._label] = self;
-        //         return self;
-        //     }
-        //     else return DataColumn.prototype._lambda;
-        // };
 
         proto.apply = function(column){
             if(self._lambda!==undefined){
@@ -682,60 +637,94 @@
         });
     }).bind(Series.prototype);
 
+    Series.extensions = { static:{}, object:{} };
+    Series.extension = function extension(name, implementation, only){
+        implementation.prototype = new implementation(Series.prototype);
 
-    var is = function is(series){ this.series = series; };
-    var to = function to(series){ this.series = series; };
-    var string = function string(series){ this.series = series; };
-    var datetime = function datetime(series){
+        if(only===undefined){
+            Series[name] = new implementation();
+            //Series[name] = dynamic(Series, name, function(){ return new implementation(); });
+            Series.prototype[name] = Series.prototype.getprop(name, function(){ return new implementation(this); });
+
+            Series.extensions.static[name] = implementation.prototype;
+            Series.extensions.object[name] = Series.prototype[name];
+        }
+        else
+            switch(only){
+                case 'static':
+                    Series[name] = implementation.prototype;
+                    Series.extensions.static[name] = implementation.prototype;
+                    break;
+                default:
+                    Series.prototype[name] = Series.prototype.getprop(name, function(){ return new implementation(this); });
+                    Series.extensions.object[name] = Series.prototype[name];
+                    break;
+            }
+        return implementation;
+    };
+
+    var is       = Series.extension('is', function is(series){ this.series = series; });
+    var to       = Series.extension('to', function to(series){ this.series = series; } );
+    var string   = Series.extension('string', function string(series){ this.series = series; });
+    var datetime = Series.extension('datetime', function datetime(series){
         this.series = series;
         this.datetime = Object.create(Date);
         this.date;
-    };
+    });
 
-    is.prototype = new is(Series.prototype);
-    to.prototype = new to(Series.prototype);
-
-    is.prototype.boolean = function(col){
+    is.prototype.boolean = function(x){
         var i, char, check;
 
         check = function(item){ return typeof item=='boolean' || item instanceof Boolean; };
 
-        if(col!==undefined)
-            return this.series.every(function(row){ return check(row[col]); });
+        if(this.series===Series.prototype)
+            if(x instanceof Array)
+                return x.every(function(item){ return check(item); });
+            else return check(x);
+
+        if(x!==undefined)
+            return this.series.every(function(row){ return check(row[x]); });
         return this.series.every(function(row){ return check(row); });
     };
 
-    is.prototype.numeric = function(col){
+    is.prototype.numeric = function(x){
+        var check = function(item){ return !isNaN(parseFloat(item)) && isFinite(item); };
+
+        if(this.series===Series.prototype)
+            if(x instanceof Array)
+                return x.every(function(item){ return check(item); });
+            else return check(x);
+
         if(this.series.count<=0)
             return false;
-        if(col!==undefined){
-            return this.series.filter(function(row){
-                return !isNaN(parseFloat(row[col])) && isFinite(row[col]);
-            }).length > 0;
+        if(x!==undefined){
+            return this.series.filter(function(row){ return check(row[x]); }).length > 0;
         }
         else{
-            return this.series.every(function(row){return !isNaN(parseFloat(row)) && isFinite(row);});
+            return this.series.every(function(row){ return check(row); });
         }
     };
 
-    is.prototype.string = function(col){
+    is.prototype.string = function(x){
         var i, char, check;
-
-        if(this.series.count<=0)
-            return false;
 
         check = function(item){ return typeof item=='string' || item instanceof String; };
 
-        if(col!==undefined)
-            return this.series.every(function(row){ return check(row[col]); });
-        return this.series.every(function(row){ return check(row); });
-    };
-
-    is.prototype.alphanumeric = function(col){
-        var i, char, check;
+        if(this.series===Series.prototype)
+            if(x instanceof Array)
+                return x.every(function(item){ return check(item); });
+            else return check(x);
 
         if(this.series.count<=0)
             return false;
+
+        if(x!==undefined)
+            return this.series.every(function(row){ return check(row[x]); });
+        return this.series.every(function(row){ return check(row); });
+    };
+
+    is.prototype.alphanumeric = function(x){
+        var i, char, check;
 
         check = function(item){
             if(typeof item=='number' || item instanceof Number)
@@ -753,16 +742,21 @@
             return false;
         };
 
-        if(col!==undefined)
-            return this.series.every(function(row){ return check(row[col]); });
+        if(this.series===Series.prototype)
+            if(x instanceof Array)
+                return x.every(function(item){ return check(item); });
+            else return check(x);
+
+        if(this.series.count<=0)
+            return false;
+
+        if(x!==undefined)
+            return this.series.every(function(row){ return check(row[x]); });
         return this.series.every(function(row){ return check(row); });
     };
 
-    is.prototype.empty = function(col){
+    is.prototype.empty = function(x){
         var i, char, check;
-
-        if(this.series.count<=0)
-            return true;
 
         check = function(item){
             return(
@@ -774,8 +768,16 @@
                 ( Object.keys(item).length===0 && item.constructor===Object              ));
         };
 
-        if(col!==undefined)
-            return this.series.every(function(row){ return check(row[col]); });
+        if(this.series===Series.prototype)
+            if(x instanceof Array)
+                return x.every(function(item){ return check(item); });
+            else return check(x);
+
+        if(this.series.count<=0)
+            return true;
+
+        if(x!==undefined)
+            return this.series.every(function(row){ return check(row[x]); });
         return this.series.every(function(row){ return check(row); });
     };
 
@@ -793,22 +795,34 @@
         return false;
     };
 
-    is.prototype.not = function(){
-        var self = this;
+    is.prototype.not = dynamic(is.prototype, 'not', function(){
+            var
+            self   = this,
+            series = this.series,
+            getter = function(target, name){ return function(){ return !target.is[name].apply(self, arguments); }; };
+            return new Proxy(series, { get: getter });
+    });
 
-        var series = this.series;
-        var getter = function(target, name){
-            //if(this.hasOwnProperty(name)){
-            return function(){ return !target.is[name]; };
-            //}
-            // else{
-            //     if(typeof name=='string')
-            //         return typeof this != name;
-            //     else return this !== name;
-            // }
+    is.prototype.date = function(col){
+       var i, char, check;
+
+        if(this.series.count<=0)
+            return false;
+
+        check = function(item){
+            if(item instanceof Date)
+                return Object.prototype.toString.call(new Date(item)) === "[object Date]";
+            else if(typeof item=='string' || item instanceof String)
+                return isNaN(Date.parse(item))===false;
+            else if(typeof item=='number' || item instanceof Number )
+                return (item>=DAY_ZERO && item<=Date.now()) || (item*1000<=Date.now && item*1000>DAY_ZERO);
+            return false;
         };
-        return new Proxy(series, { get: getter });
-    }.call(is.prototype);
+
+        if(col!==undefined)
+            return this.series.every(function(row){ return check(row[col]); });
+        return this.series.every(function(item){ return check(item); });
+    };
 
     to.prototype.string = function(col){
         if(col!==undefined)
@@ -858,29 +872,42 @@
             this.units = date.units;
 
             this.convert = function(input, precision){
-                var value,
-                    proto,
-                    output = {},
+                var proto,
+                    outputs = [],
                     units = Object.keys(this.units),
                     stringout = "",
 
+                input     = input===undefined ? this.series : input;
                 precision = precision!==undefined ? precision : this.unit;
                 precision = precision=='mixed' || precision=='full' ? units.length : units.indexOf(precision)+1;
 
-                for(var i=0; i<precision; i++ ){
-                    value = Math.floor(input / this.units[units[i]]);
-                    output[units[i]+'s'] = value;
-                    input = input % this.units[units[i]];
-                    stringout += value + " "  + units[i]+'s';
-                    if(i<precision-2)
-                        stringout += ", ";
-                    if(i==precision-2)
-                        stringout += ", and ";
+                var exec = function(){
+                    var value, output = {};
+
+                    for(var i=0; i<precision; i++ ){
+                        value = Math.floor(input / this.units[units[i]]);
+
+                        output[units[i]+'s'] = value;
+                        input = input % this.units[units[i]];
+
+                        stringout += value + " "  + units[i]+'s';
+                        if(i<precision-2)
+                            stringout += ", ";
+                        if(i==precision-2)
+                            stringout += ", and ";
+
+                    }
+
+                    proto = Object.getPrototypeOf(output);
+                    proto.toString = function(){ return stringout; };
+                    Object.setPrototypeOf(output, proto);
+                    return output;
+                };
+
+                if(input instanceof Array){
+                    return input.map(function(item){ return exec(item, precision); });
                 }
-                proto = Object.getPrototypeOf(output);
-                proto.toString = function(){ return stringout; };
-                Object.setPrototypeOf(output, proto);
-                return output;
+                return exec( input, precision );
             };
 
             this.between = applicable(function(options){
@@ -903,6 +930,12 @@
 
                     options.data.forEach(function(row){ options.value.push(calc(row[args[1]], args[2])); });
                 }
+                else if(args[1] instanceof Array && args.length<3){
+                    options.data  = this.series;
+                    options.value = Series.flat([]);
+
+                    options.data.forEach(function(item, index){ options.value.push(calc(item, args[1][index])); });
+                }
                 else if(args[1] instanceof Array){
                     options.data = args[1];
                     options.value = Series.flat([]);
@@ -913,12 +946,11 @@
                     options.value = calc(args[1], args[2]);
                 }
                 return options;
-            });
+            }.bind(this));
 
-            this.since = function(t1){
-                t1 = t1!==undefined ? t1 : 0;
-                var t2 = Date.now();
-                return this.between(t1, t2);
+            this.since = function(t){
+                t = t!==undefined ? t : this.series.is.date() ? this.series : new Date(0);
+                return this.between(t, new Date(Date.now()));
             };
 
             this.add = function(){
@@ -936,17 +968,19 @@
     var weeks   = timeunit('day');
     var days    = timeunit('day');
     var hours   = timeunit('hour');
+    var minutes = timeunit('minutes');
     var seconds = timeunit('second');
     var mixed   = timeunit('mixed');
 
     datetime.prototype = new datetime(Series.prototype);
-    years.prototype   = new years(datetime.prototype);
-    months.prototype  = new months(datetime.prototype);
-    weeks.prototype   = new weeks(datetime.prototype);
-    days.prototype    = new days(datetime.prototype);
-    hours.prototype   = new hours(datetime.prototype);
-    seconds.prototype = new seconds(datetime.prototype);
-    mixed.prototype   = new mixed(datetime.prototype);
+    years.prototype    = new years(datetime.prototype);
+    months.prototype   = new months(datetime.prototype);
+    weeks.prototype    = new weeks(datetime.prototype);
+    days.prototype     = new days(datetime.prototype);
+    hours.prototype    = new hours(datetime.prototype);
+    minutes.prototype  = new minutes(datetime.prototype);
+    seconds.prototype  = new seconds(datetime.prototype);
+    mixed.prototype    = new mixed(datetime.prototype);
 
     datetime.prototype.units = {
         year   : 24*60*60*365*1000,
@@ -962,9 +996,154 @@
     datetime.prototype.months  = dynamic(datetime.prototype, 'months',  function(){ return new months(this);  });
     datetime.prototype.days    = dynamic(datetime.prototype, 'days',    function(){ return new days(this);    });
     datetime.prototype.hours   = dynamic(datetime.prototype, 'hours',   function(){ return new hours(this);   });
+    datetime.prototype.minutes = dynamic(datetime.prototype, 'minutes',   function(){ return new minutes(this);   });
     datetime.prototype.seconds = dynamic(datetime.prototype, 'seconds', function(){ return new seconds(this); });
     datetime.prototype.mixed   = dynamic(datetime.prototype, 'mixed',   function(){ return new mixed(this);   });
 
+
+    function mapto(input, value){
+        if(input instanceof Array){
+            if(typeof value=='function')
+                input.map(function(item, index, series){ series[index] = value.call(input, item, index, series); });
+            else if(values instanceof Array)
+                input.map(function(item, index, series){ series[index] = value[index]; });
+            else
+                input.map(function(item, index, series){ series[index] = value; });
+        }
+        else{
+            input = value;
+        }
+        return input;
+    }
+
+    datetime.prototype.timestamp = function(row, column){
+        if(this.series instanceof DataColumn)
+            this.date = this.series;
+
+        this.date = mapto(this.date, function(){ return new Date(Date.now()); } );
+
+        if(this.series instanceof DataColumn){
+            if(AUTO_APPLY)
+                return this.series.lambda(this.date).apply();
+            return this.series.lambda(this.date);
+        }
+
+        return this.date;
+    };
+
+    datetime.prototype.unix = function(date){
+        this.date = this.date===undefined ? this.series : this.date;
+        date = typeof date=='undefined' ? this.date : date;
+
+        date = mapto(date, function(d){
+            if(typeof d=='string' ||  d instanceof String)
+                d=new Date(d);
+            return Math.floor(d / 1000);
+        });
+
+        if(this.series instanceof DataColumn){
+            if(AUTO_APPLY)
+                return this.series.lambda(this.date).apply();
+            return this.series.lambda(this.date);
+        }
+        return date;
+    };
+
+    datetime.prototype.parse = function(){
+        // for oddball date formats
+    };
+
+    datetime.prototype.convert = function(){
+        var converted = [],
+            now = Date.now();
+
+        if( this.series.is.numeric() )
+            converted = this.series.map(function(date, index, series){
+                if(date*1000<= now) date = date*1000; return new Date(date); });
+
+        else if( this.series.is.string() )
+            converted = this.series.map(function(date){ return new Date(date); });
+
+        else if( this.series.is.date() )
+            converted = this.series.map(function(date){ return new Date(date) - new Date(0); } );
+
+        if(this.series instanceof DataColumn){
+            if(AUTO_APPLY)
+                return this.series.lambda(converted).apply();
+            return this.series.lambda(converted);
+        }
+
+        return Series.from(converted);
+    };
+
+    datetime.prototype.delta =
+    datetime.prototype.between = function(){
+        var calc, converted, args = arguments;
+
+        calc = function(t1, t2){
+            var diff;
+            if(typeof t1=='string' || t1 instanceof String)
+                t1 = Date.parse(t1);
+            if(typeof t2=='string' || t2 instanceof String)
+                t2 = Date.parse(t2);
+            console.log(t1 - t2);
+            diff = Math.abs(t1-t2);
+            return Math.floor(diff);
+        };
+
+        if(args.length<2 && args.length>0){
+            if(args[0] instanceof Array)
+                 converted = this.series.map(function(row, index, series){ return calc(row, args[0][index]); });
+            else converted = this.series.map(function(row, index, series){ return calc(row, args[0]); });
+        }
+        else if(args.length>1){
+            if(args[0] instanceof Array && args[1] instanceof Array)
+                converted = args[0].map(function(row, index, series){ return calc(row, args[1][index]); });
+            else if(args[0] instanceof Array)
+                converted = this.series.map(function(row, index, series){ return calc(row, args[1]); });
+            else
+                converted = calc(args[0], args[1]);
+        }
+        else
+            converted = this.series.map(function(row, index, series){ return calc(row, new Date(Date.now())); });
+
+        if(this.series instanceof DataColumn){
+            if(AUTO_APPLY)
+                return this.series.lambda(converted).apply();
+            return this.series.lambda(converted);
+        }
+        return converted;
+    };
+
+    datetime.prototype.since = function(t){
+        t = t!==undefined ? t : this.series.is.date() ? this.series : new Date(0);
+        return this.between(t, new Date(Date.now()));
+    };
+
+    datetime.prototype.random = function(min, max, column, format, options){
+        var self = this;
+        self.date = self.series;
+
+        if(typeof min=='string' || min instanceof String)
+            min = Date.parse(min);
+        if(typeof max=='string' || max instanceof String)
+            max = Date.parse(max);
+
+        var rand = function(){ return Math.floor(Math.random() * (max - min + 1)) + min; };
+
+        if( this.series.is.column() )
+            column = column ? column : this.series._label;
+
+        var target = this.series.is.column() ? this.series._parent : this.series;
+
+        target = target.map(function(row, index, series){
+            var value = typeof format!='undefined' ? self.format.call(self, rand(), format, options) : rand();
+            if(column) series[index][column] = new Date(value);
+            else series[index] = new Date(value);
+        });
+
+        return this.series;
+    };
 
     datetime.prototype.format = function(){
         /*
@@ -1050,7 +1229,7 @@
             };
 
             tostring = function(date, options){
-                date  = new Date(date);
+                //date  = new Date(date);
                 _date = "";
 
                 if(options.weekday)
@@ -1172,11 +1351,15 @@
         };
 
         convert = function(_date_, locale, options){
+            if(options && options.locale!==undefined){
+                locale = options.locale;
+                delete options.locale;
+            }
             if(_date_ instanceof Array){
-                _date_.map( (date) => new Date(date).toLocaleDateString(locale, options) );
+                _date_.map( (date) => date.toLocaleDateString(locale, options) );
             }
             else{
-                _date_ = new Date(_date_).toLocaleDateString(locale, options);
+                _date_ = _date_.toLocaleDateString(locale, options);
             }
             return _date_;
         };
@@ -1193,15 +1376,13 @@
         this.date = date===undefined || date===null ? this.date : date;
         this.date = this.date===undefined ? this.series : this.date;
 
-        if(options && options.locale!==undefined){
-            locale = options.locale;
-            delete options.locale;
-        }
+        if(this.date instanceof Array)
+            this.date.map(function(date, index, series){ if(!(date instanceof Date)) return new Date(date); });
 
         if(format===undefined){
             options = { weekday: 'long', year: 'numeric', month:'long', day:'numeric' };
             if(this.date instanceof Array)
-                 this.date = this.date.map(function(date, index, series){ return new Date(date).toLocaleString('en-US', options); });
+                 this.date = this.date.map(function(date, index, series){ return date.toLocaleString('en-US', options); });
             else this.date = new Date(this.date).toLocaleString('en-US', options);
         }
         else if(typeof format == 'function'){
@@ -1220,72 +1401,13 @@
             else this.date = convert(this.date, format, options);
         }
 
-        if(this.series instanceof DataColumn)
-           return this.series.lambda(this.date);
+        if(this.series instanceof DataColumn && !date){
+            if(AUTO_APPLY)
+                this.series.lambda(this.date).apply();
+            return this.series.lambda(this.date);
+        }
         return this.date;
     };
-
-    datetime.prototype.unix = function(){};
-
-    datetime.prototype.parse = function(){};
-
-    datetime.prototype.long = function(){};
-
-    datetime.prototype.short = function(){};
-
-    datetime.prototype.convert = function(){};
-
-    datetime.prototype.delta =
-    datetime.prototype.between = function(){
-        var calc, args = arguments;
-
-        calc = function(t1, t2){
-            var diff;
-            if(typeof t1=='string' || t1 instanceof String)
-                t1 = Date.parse(t1);
-            if(typeof t2=='string' || t2 instanceof String)
-                t2 = Date.parse(t2);
-                diff = Math.abs(t1-t2);
-            return Math.floor(diff);
-        };
-
-        return calc(args[0], args[1]);
-    };
-
-    datetime.prototype.since = function(t){
-        t = t!==undefined ? t : 0;
-        return this.between(t, Date.now());
-    };
-
-    datetime.prototype.random = function(min, max, column, format, options){
-        var self = this;
-        self.date = self.series;
-
-        if(typeof min=='string' || min instanceof String)
-            min = Date.parse(min);
-        if(typeof max=='string' || max instanceof String)
-            max = Date.parse(max);
-
-        var fn = function(){ return Math.floor(Math.random() * (max - min + 1)) + min; };
-
-        if(this.series.is.column())
-            column = column ? column : this.series._label;
-
-        var target = this.series.is.column() ? this.series._parent : this.series;
-
-        target = target.map(function(row, index, series){
-            var value = typeof format!='undefined' ? self.format.call(self, fn(), format, options) : fn();
-            if(column) series[index][column] = value; else series[index] = value;
-            return series[index];
-        });
-
-        return this.series;
-    };
-
-    Series.prototype.is = Series.prototype.getprop('is', function(){ return new is(this); });
-    Series.prototype.to = Series.prototype.getprop('to', function(){ return new to(this); });
-    Series.prototype.string = Series.prototype.getprop('string', function(){ return new string(this); });
-    Series.prototype.datetime = Series.prototype.getprop('datetime', function(){ return new datetime(this); });
 
     /* Series Object Methods */
     Series.prototype.flatten = function(){
@@ -2605,6 +2727,11 @@
     scope.Series.column = Series.column;
     scope.Series.Column = Series.Column;
     scope.Series.Base   = BaseSeries;
+
+    for(var name in Series.extensions.static)
+        scope.Series[name] = Series.extensions.static[name];
+
+
     return Series;
 
 }).call(this, typeof window=='undefined' ? global : window);

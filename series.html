@@ -39,6 +39,9 @@
 	animals.columns(["id", "name", "species", "skill", "eats", "habitat", "size", "vaccinated"]);
     //animals.commit();
 
+    animals.add.column('birthday');
+    animals.birthday.datetime.random('2005', '2015');
+
 	dogs = animals.where("species=dog");
 	</script>
 </head>
