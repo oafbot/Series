@@ -972,7 +972,6 @@
     var seconds = timeunit('second');
     var mixed   = timeunit('mixed');
 
-    datetime.prototype = new datetime(Series.prototype);
     years.prototype    = new years(datetime.prototype);
     months.prototype   = new months(datetime.prototype);
     weeks.prototype    = new weeks(datetime.prototype);
