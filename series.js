@@ -1,7 +1,7 @@
 (function(global){
     var scope = this,
         environment = typeof window=='undefined' ? 'server' : 'browser',
-        exports     = typeof module!='undefined' ? module.exports : {},
+        exports     = typeof module!='undefined' ? module.exports : environment=='browser' ? scope : {},
 
         AUTO_INDEX   = true,
         AUTO_COMMIT  = false,
@@ -2711,27 +2711,24 @@
         return {count : series.count, index : series._index};
     };
 
-    if(environment=='server'){
-        exports.Series = Series;
-        return exports;
-    }
+    exports.Series        = Series.factory;
+    exports.Series.Base   = BaseSeries;
+    exports.Series.Column = Series.Column;
 
-    scope.Series        = Series.factory;
-    scope.Series.new    = Series.new;
-    scope.Series.from   = Series.from;
-    scope.Series.empty  = Series.empty;
-    scope.Series.export = Series.export;
-    scope.Series.json   = Series.json;
-    scope.Series.csv    = Series.csv;
-    scope.Series.load   = Series.load;
-    scope.Series.column = Series.column;
-    scope.Series.Column = Series.Column;
-    scope.Series.Base   = BaseSeries;
+    exports.Series.new    = Series.new;
+    exports.Series.from   = Series.from;
+    exports.Series.empty  = Series.empty;
+    exports.Series.export = Series.export;
+    exports.Series.json   = Series.json;
+    exports.Series.csv    = Series.csv;
+    exports.Series.load   = Series.load;
+    exports.Series.column = Series.column;
 
     for(var name in Series.extensions.static)
-        scope.Series[name] = Series.extensions.static[name];
+        exports.Series[name] = Series.extensions.static[name];
 
+    if(environment=='server'){ return exports; }
 
-    return Series;
+    return exports.Series;
 
 }).call(this, typeof window=='undefined' ? global : window);
