@@ -319,7 +319,7 @@
             inherit(series, data);
         }
         else if(AUTO_INDEX){
-            if(series._index!==undefined)
+            if(series._index!==undefined && series.is.not.empty())
                 series.reindex();
         }
 
@@ -394,7 +394,7 @@
 
     Series.flat = function(data){ return new Series(data); };
 
-    Series.from = function(data, done){
+    Series.from = function(data, done, name){
         var series, columns, rows, check;
 
         if(data instanceof Array){
@@ -421,11 +421,11 @@
         }
         else if(typeof data=='string'){
             if(data.split('.').pop()=='csv'){
-                return Series.csv.load(data, done);
+                return Series.csv.load(data, done, name);
             }
             else if( data.split('.').pop()=='json' ||
                    ( data.indexOf("\n")<0 && ( /\/$/.test(data) || /^[\/\.a-zA-Z0-9]+$/.test(data) ))){
-                return Series.json.load(data, done);
+                return Series.json.load(data, done, name);
             }
             else if(
                 data.charAt(0)!="{" && data.charAt(0)!="[" &&
@@ -449,7 +449,7 @@
     };
 
     Series.csv = {
-        load : function(url, done){
+        load : function(url, done, name){
             var ns;
             if(typeof done=='string' || done instanceof String)
                 Series.load(url, function(text){
@@ -457,7 +457,7 @@
                     ns.path[ns.name] = Series.from(Series.csv.parse(text));
                 }, done);
             else if(typeof done=='function')
-                Series.load(url, done);
+                Series.load(url, done, name);
             return "parsing...";
         },
         parse : function(text){
@@ -510,7 +510,7 @@
     };
 
     Series.json = {
-        load : function(url, done){
+        load : function(url, done, name){
             var ns;
             if(typeof done=='string' || done instanceof String)
                 Series.load(url, function(text){
@@ -518,7 +518,7 @@
                     ns.path[ns.name] = Series.from(JSON.parse(text));
                 }, done);
             else if(typeof done=='function')
-                Series.load(url, done);
+                Series.load(url, done, name);
             return "parsing...";
         },
         dump : function(series){
@@ -874,38 +874,39 @@
             this.convert = function(input, precision){
                 var proto,
                     outputs = [],
-                    units = Object.keys(this.units),
+                    units = Object.keys(self.units),
                     stringout = "",
 
-                input     = input===undefined ? this.series : input;
-                precision = precision!==undefined ? precision : this.unit;
+                input     = input===undefined ? self.series : input;
+                precision = precision!==undefined ? precision : self.unit;
                 precision = precision=='mixed' || precision=='full' ? units.length : units.indexOf(precision)+1;
 
-                var exec = function(){
+                var exec = function(input, precision){
                     var value, output = {};
 
                     for(var i=0; i<precision; i++ ){
-                        value = Math.floor(input / this.units[units[i]]);
+                        value = Math.floor(input / self.units[units[i]]);
 
                         output[units[i]+'s'] = value;
-                        input = input % this.units[units[i]];
+                        input = input % self.units[units[i]];
 
                         stringout += value + " "  + units[i]+'s';
                         if(i<precision-2)
                             stringout += ", ";
                         if(i==precision-2)
                             stringout += ", and ";
-
                     }
 
-                    proto = Object.getPrototypeOf(output);
+                    proto = Object.create(Object.getPrototypeOf(output));
                     proto.toString = function(){ return stringout; };
                     Object.setPrototypeOf(output, proto);
                     return output;
                 };
 
                 if(input instanceof Array){
-                    return input.map(function(item){ return exec(item, precision); });
+                    //return input.map(function(item){ return exec(item, precision); });
+                    input.forEach(function(item){ outputs.push(exec(item, precision)); });
+                    return Series.from(outputs);
                 }
                 return exec( input, precision );
             };
@@ -1085,7 +1086,7 @@
                 t1 = Date.parse(t1);
             if(typeof t2=='string' || t2 instanceof String)
                 t2 = Date.parse(t2);
-            console.log(t1 - t2);
+
             diff = Math.abs(t1-t2);
             return Math.floor(diff);
         };
@@ -1513,32 +1514,35 @@
         //proto = proto instanceof Array && !(proto instanceof BaseSeries) ? this : proto;
 
         if(cols===undefined){
+            if(this._columns!==undefined && this.length>0 && this._columns.diff(Object.getOwnPropertyNames(this[0])).length<1){
+                return this._columns;
+            }
+
             _columns = Series.flat([]);
 
             for(var i=0, n=this.length; i<n; i++)
-                _columns = _columns.concat(this[i]!==null && this[i]!==undefined ? Object.keys(this[i]) : this[i]);
+                _columns = _columns.concat(this[i]!==null && this[i]!==undefined ? Object.getOwnPropertyNames(this[i]) : this[i]);
 
             _columns = _columns.unique();
-            if(_columns.length)
+            if(_columns.length>0)
                 proto._columns = _columns;
             return _columns;
         }
         else{
             var c, row;
-            var table = this.clone();
+            var clone = this.clone();
 
             commit = commit!==undefined ? commit : true;
 
             while (this.length){ this.pop(); }
 
-            for(row=0; row<table.length; row++){
+            for(row=0; row<clone.length; row++){
                 if(this[row]===undefined) this[row] = {};
 
                 for(c=0; c<cols.length; c++)
-                    this[row][cols[c]] = table[row][cols[c]];
+                    this[row][cols[c]] = clone[row][cols[c]];
             }
             proto._columns = Series.flat(cols);
-            /* debating whether commits should be automatic */
 
             if(AUTO_COMMIT && commit) this.commit(this);
             return this;
@@ -1575,7 +1579,7 @@
                 right;
 
             proto = getproto(this);
-            //proto = Object.create(proto);
+            proto = Object.create(proto);
             if(column)
                 proto._index = column;
 
@@ -1583,8 +1587,8 @@
             index = columns.indexOf(column);
 
             left  = columns.splice(0, index);
-            right = columns.splice(index+1, columns.length);
-            bound = left.count > right.count ? left : right;
+            right = columns.splice(0, columns.length);
+            bound = left.count >= right.count ? left : right;
             bound.columns.call(bound, [column].concat(left, right));
 
             Object.setPrototypeOf(this, proto);
@@ -2111,7 +2115,8 @@
                         break;
                 }
             }
-            series = series===undefined ? Series.from([]) : series;
+
+            series = typeof series===undefined ? Series.from([]) : series;
 
             inherit(series, self);
             return series;
@@ -2391,7 +2396,7 @@
     };
 
     Series.prototype.col = Series.prototype.getprop('col', function(){
-        var series = this;
+        var self = this;
 
         var factory = function(series, c){
             var column = {};
@@ -2402,30 +2407,37 @@
             return column;
         };
 
+        var defineprop = function(series){
+            columns = series.columns();
+            columns.forEach(function(name){
+                if(series.is.not.column())
+                    series[name] = series.getprop.call(series, name,
+                        function(){ return getter.call(series, this, name); },
+                        function(value){ setter.call(this, this, name, value); });
+            });
+        };
+
         var setter = function(target, name, value, receiver){
             var columns;
+            if(target.is.not.empty() && value){
+                if(typeof value!=='undefined' && value instanceof Array)
+                    target = target.map(function(row, index){ row[name] = value[index]; return row;});
+                else if(typeof value!=='undefined')
+                    target = target.map(function(row, index){ row[name] = value; return row;});
 
-            if(typeof value!=='undefined' && value instanceof Array)
-                target.map(function(row, index){ row[name] = value[index]; return row; });
-            else if(typeof value!=='undefined')
-                target.map(function(row, index){ row[name] = value; return row; });
+                if(target._columns!==undefined)
+                    target.columns(target._columns.copy().push(name));
+                else target.columns([name]);
+            }
         };
 
         var getter = function(target, name, receiver){
-            var columns, proto;
-            columns = target.columns();
-            columns.forEach(function(col){
-                target[col] = target.getprop.call(target, col, function(){
-                    var values = factory(this, col);
-                    var series = Series.column([...values], name, target);
-                    //var proto = getproto(this);
-                    //Object.setPrototypeOf(series, proto);
-                    return series;
-                });
-            });
-            return target[name];
+            var values = factory(target, name);
+            return Series.column([...values], name, target);
         };
-        var proxy = new Proxy(series, { get: getter, set: setter });
+
+        defineprop(self);
+        var proxy = new Proxy(self, { get: getter, set: setter });
         return proxy;
     });
 
@@ -2501,12 +2513,17 @@
     };
 
     Series.prototype.add = Series.prototype.getprop('add', function(){
-        var self = this;
+        var columns, self = this;
         return {
             column : function(name, init){
-                self.map(function(row){row[name] = init!==undefined ? init : null; return row;});
+                self = self.map(function(row){row[name] = init!==undefined ? init : null; return row;});
+
+                if(self._columns!==undefined){
+                    var copy = self._columns.copy();
+                    copy.push(name);
+                    self.columns(copy);
+                }
                 self.col[name];
-                self.columns();
                 return self;
             },
             row : function(values, position){
@@ -2594,6 +2611,7 @@
             column,
             segment,
             remainder,
+            breakpoint,
             offset  = 0,
             wrap    = wrap ? wrap : 80,
             width   = [],
@@ -2611,7 +2629,7 @@
            return Array(length>0 ? length+1 : 1).join(char!==undefined ? char : " ");
         };
 
-        render = function(table, columns, offset){
+        render = function(table, columns, offset, breakpoint){
             table.forEach(function(row, index){
                 if(index===0){
                     col = "";
@@ -2630,12 +2648,15 @@
                     console.log(col);
                     console.log(hr);
                 }
+
+                if(breakpoint!==undefined && index===breakpoint)
+                    console.log("...");
                 console.log(row);
             });
             return "count: " + series.count;
         };
 
-        display = function(series, columns, offset){
+        display = function(series, columns, offset, breakpoint){
             table = [];
             for(var i=0; i<series.length; i++){
                 row = i + repeat(max[0] - String(i).length + spacer);
@@ -2649,8 +2670,13 @@
 
                 table.push(row);
             }
-            return render(table, columns, offset);
+            return render(table, columns, offset, breakpoint);
         };
+
+        if(series.length > 40){
+            series = series.row([0,9]).concat(series.row([-10,0]));
+            breakpoint = 10;
+        }
 
         columns.forEach(function(column, index){
             values = [];
@@ -2698,16 +2724,16 @@
                 console.log("\n");
                 offset += i > 0 ? cutoffs[i-1].length : 0;
                 columns = Series.flat(['index'].concat(cutoffs[i]));
-                display(wrapped[i], columns, offset);
+                display(wrapped[i], columns, offset, breakpoint);
             }
         }
         else{
             offset = 0;
             columns = Series.flat(['index'].concat(_cols_));
             console.log("\n");
-            display(series, columns, offset);
+            display(series, columns, offset, breakpoint);
         }
-        return {count : series.count, index : series._index};
+        return {showing : series.count, count : this.count, index : series._index};
     };
 
     exports.Series        = Series.factory;

@@ -42,7 +42,11 @@
     animals.add.column('birthday');
     animals.birthday.datetime.random('2005', '2015');
 
-	dogs = animals.where("species=dog");
+    animals.add.column('timestamp');
+    animals.timestamp.datetime.timestamp();
+    /*animals.timestamp.datetime.convert();*/
+
+    dogs = animals.where("species=dog");
 	</script>
 </head>
 <body>
