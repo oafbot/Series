@@ -9,6 +9,7 @@
         INDEX_OFFSET = 0,
         AUTO_APPLY   = true,
         DAY_ZERO     = -2208970800000, // new Date('JAN 1 1900') - new Date(0);
+        ID           = 0,
 
         istype,
         colnums,
@@ -324,7 +325,7 @@
     Series.AUTO_APPLY   = AUTO_APPLY;
     Series.DAY_ZERO     = DAY_ZERO;
 
-    var ID = 0;
+
 
     /* Factory method to be exposed to the outside */
     DataSeries = function DataSeries(data, index){
@@ -493,9 +494,9 @@
                 yield { "column": columns[i], "value": row[columns[i]] };
         };
 
-        DataRow.prototype.next = {};
-        DataRow.prototype.next.value = function(){};
-        DataRow.prototype.next.key   = function(){};
+        // DataRow.prototype.next = {};
+        // DataRow.prototype.next.value = function(){};
+        // DataRow.prototype.next.key   = function(){};
 
         DataRow.prototype.keys    = dynamic(self, 'keys',    function(){ return Series.flat([...DataRow.prototype[Symbol.iterator]()]); });
         DataRow.prototype.values  = dynamic(self, 'values',  function(){ return Series.flat([...values(this)]);  });
@@ -1678,12 +1679,13 @@
         var clone, proto;
         proto = Object.getPrototypeOf(this);
         clone = this.map(function(a, i, s){
-            //var b = new DataRow(Object.assign({}, a), s);
+            var b = new DataRow(Object.assign({}, a), s);
             //var b = Object.assign(Object.create(DataRow.prototype), a)
             //Object.setPrototypeOf(b, Object.create(DataRow.prototype));
-            var b = {};
-            for(var c in a) b[c] = a[c];
-            return new DataRow(b, s);
+            //var b = {};
+            //for(var c in a) b[c] = a[c];
+            //return new DataRow(b, s);
+            return b;
         });
 
         Object.setPrototypeOf(clone, Object.create(proto));
@@ -2548,11 +2550,12 @@
                 merged = _join_(left, right);
             }
 
-            proto = Object.getPrototypeOf(merged);
-            proto._columns = undefined;
-            proto._columns = merged.columns();
-            proto.col.reset(proto);
-            Object.setPrototypeOf(merged, proto);
+            //proto = Object.getPrototypeOf(merged);
+            merged._columns = undefined;
+            merged._columns = merged.columns();
+            merged.col.reset(merged);
+            //Object.setPrototypeOf(merged, proto);
+            merged._id = ID++;
             return merged;
         };
 
@@ -2614,7 +2617,7 @@
             return column;
         };
 
-        purge = function(series, columns){
+        var purge = function(series, columns){
             var proto = Object.getPrototypeOf(series);
             var desc = Object.keys(Object.getOwnPropertyDescriptors(proto));
             var keys = Object.keys(proto);
@@ -2637,18 +2640,20 @@
             //}
         };
 
-        reset = function(series){
+        var reset = function(series){
             var proto, columns;
             proto = Object.getPrototypeOf(self);
-            // proto._columns = undefined;
-            columns = series.columns();
-
+            //series._columns = undefined;
+            console.log(series.columns());
+            series._columns = series.columns();
+            columns = series._columns;
             columns.forEach(function(name){
                 if(series.is.not.column())
                     proto[name] = dynamic.call(series, series, name,
                         function(){ return getter.call(series, this, name); },
                         function(value){ setter.call(this, this, name, value); }, false);
             });
+            console.log(series._columns)
             Object.create(Object.setPrototypeOf(series, Object.create(proto)) );
             return proto;
         };
@@ -2665,7 +2670,7 @@
 
         var getter = function(target, name, receiver){
             if(name=='reset')
-                return reset;
+                return reset.bind(target);
             else if(name=='purge')
                 return purge;
             var values = factory(target, name);
@@ -2760,12 +2765,11 @@
                     copy.push(name);
                     self.columns(copy);
                 }
-
+                else self.columns();
                 proto = Object.getPrototypeOf(self);
-                proto._columns = undefined;
-                proto._columns = self.columns();
+                //self._columns = undefined;
                 proto.col.reset(proto);
-                Object.setPrototypeOf(self, proto);
+                //Object.setPrototypeOf(self, proto);
                 return self;
             },
             row : function(values, position){
