@@ -1680,11 +1680,6 @@
         proto = Object.getPrototypeOf(this);
         clone = this.map(function(a, i, s){
             var b = new DataRow(Object.assign({}, a), s);
-            //var b = Object.assign(Object.create(DataRow.prototype), a)
-            //Object.setPrototypeOf(b, Object.create(DataRow.prototype));
-            //var b = {};
-            //for(var c in a) b[c] = a[c];
-            //return new DataRow(b, s);
             return b;
         });
 
@@ -1939,8 +1934,9 @@
             for(var col in row)
                 if(args.indexOf(col)>-1)
                     copy[col] = row[col];
-            return new DataRow(copy);
+            return new DataRow(copy, selected, selected._index);
         });
+        console.log(selected)
         selected._id = ID++;
         //selected = Series.from(selected);
         selected.columns(args);
@@ -2644,16 +2640,14 @@
             var proto, columns;
             proto = Object.getPrototypeOf(self);
             //series._columns = undefined;
-            console.log(series.columns());
-            series._columns = series.columns();
-            columns = series._columns;
+            columns = series.columns();
+            series._columns = columns;
             columns.forEach(function(name){
                 if(series.is.not.column())
                     proto[name] = dynamic.call(series, series, name,
                         function(){ return getter.call(series, this, name); },
                         function(value){ setter.call(this, this, name, value); }, false);
             });
-            console.log(series._columns)
             Object.create(Object.setPrototypeOf(series, Object.create(proto)) );
             return proto;
         };
