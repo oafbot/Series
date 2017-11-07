@@ -47,7 +47,8 @@
             set: setter===undefined ?
                  function( ){ property = getter.call(this); } :
                  function(v){ property = setter.call(this, v); },
-            configurable: true
+            configurable: true,
+            enumerable : false
         });
     };
 
@@ -71,6 +72,7 @@
         _columns = _base_._columns;
         _lambda  = _base_._lambda;
         _type    = _base_._type;
+        _id      = _base_._id;
 
         if(proto instanceof Series)
             while(proto instanceof Series){
@@ -322,13 +324,15 @@
     Series.AUTO_APPLY   = AUTO_APPLY;
     Series.DAY_ZERO     = DAY_ZERO;
 
-    var _id = 0;
+    var ID = 0;
 
     /* Factory method to be exposed to the outside */
     DataSeries = function DataSeries(data, index){
         var proto, series, columns, row;
         series = new Series(data);
         Object.setPrototypeOf(series, Object.create(DataSeries.prototype));
+
+        columns = series.columns();
 
         proto = Object.getPrototypeOf(series);
         proto.meta = {
@@ -341,32 +345,36 @@
             registry : undefined
         };
 
-        //if(proto.meta.registry===undefined)
-        //proto.meta.registry = { columns: new Map() };
         proto.meta.registry = DataSeries.prototype.meta.registry;
         proto.meta.type = "series";
-        proto.meta.id = _id++;
+        proto.meta.id = ID++;
+        proto.meta.index = index;
+        proto.meta.registry.columns.set(proto.meta.id, columns);
+        //Object.setPrototypeOf(series, proto);
 
-        if(index!==undefined){
+        //if(series.length && series.is.not.column()){
+        for(var i=0, n=series.length; i<n; i++)
+            series[i] = new DataRow(series[i], series, index);
+        //}
+
+        /*
+            if(index!==undefined){
             series.index = index;
         }
-        else if(typeof data._index!=='undefined'){
+        else*/
+
+        if(typeof data._index!=='undefined'){
             inherit(series, data);
         }
         else if(AUTO_INDEX){
-            if(series._index!==undefined && series.is.not.empty())
+            if(series._index!==undefined && series.is.not.empty() && series.index.is.numeric())
                 series.reindex();
         }
 
         if(AUTO_COMMIT)
            series.commit();
 
-        //if(series.length && series.is.not.column()){
-        for(var i=0, n=series.length; i<n; i++)
-            series[i] = new DataRow(series[i], series);
-        //}
-
-        // series._columns = undefined;
+        //series._columns = undefined;
         columns = series.columns();
         proto.col.reset(proto);
         proto.meta.registry.columns.set(proto.meta.id, columns);
@@ -433,23 +441,40 @@
     Series.Column = DataColumn;
 
 
-    DataRow = function DataRow(data, series){
-        //var self = Object.assign(DataRow.prototype, data);
-        var self = data;
+    DataRow = function DataRow(row, series, index){
+        var self = {};
         var proto = DataRow.prototype;
-        var columns = series.columns();
+        var columns = series._columns;
+        var keys, values;
 
-        DataRow.prototype.init = function(){
-            var c, row;
+        if(columns===undefined || Object.keys(row).length>columns.length){
+            columns = [...Object.keys(row)];
+        }
 
-            row = Object.assign({}, self);
-            self = {};
+        if(index!==undefined){
+            var position = columns.indexOf(index);
 
-            for(c=0, n=columns.length; c<n; c++)
-                self[columns[c]] = row[columns[c]];
+            if(index!==undefined && position!==0 && position>-1){
+                columns.splice(position, 1);
+                columns.unshift(index);
+            }
+        }
 
-            //if(cols)
-            //    self._columns = Series.flat(cols);
+        if(columns && columns.length && columns!==series._columns)
+            series.columns(columns);
+
+        //console.log(series._columns, row)
+
+        init = function(){
+            for(var c=0, n=columns.length; c<n; c++){
+                Object.defineProperty(self, columns[c], {
+                    enumerable: true,
+                    configurable: true,
+                    writable: true,
+                    value: row[columns[c]]
+                });
+            //self[columns[c]] = row[columns[c]];
+            }
             return self;
         };
 
@@ -458,24 +483,26 @@
                 yield columns[i];
         };
 
-        // DataRow.prototype.values =
-        // DataRow.prototype[Symbol.iterator] = function*(){
-        //     var columns = series.columns();
-        //     for(var i=0, n=columns.length; i<n; i++)
-        //         yield columns[i];
-        // };
+        values = function*(row){
+            for(var i=0, n=series._columns.length; i<n; i++)
+                yield row[columns[i]];
+        };
 
-        // DataRow.prototype.keys = dynamic(self, 'keys', function(){
-        //     var columns = series.columns();
-        //     return DataRow.prototype[Symbol.iterator] = function*(){
-        //         for(var i=0, n=columns.length; i<n; i++)
-        //             yield columns[i];
-        //     };
-        // });
+        entries = function*(row){
+            for(var i=0, n=series._columns.length; i<n; i++)
+                yield { "column": columns[i], "value": row[columns[i]] };
+        };
 
-        // Object.setPrototypeOf(self, Object.create(DataRow.prototype));
-        // return new Proxy(self, {   });
-        return self.init();
+        DataRow.prototype.next = {};
+        DataRow.prototype.next.value = function(){};
+        DataRow.prototype.next.key   = function(){};
+
+        DataRow.prototype.keys    = dynamic(self, 'keys',    function(){ return Series.flat([...DataRow.prototype[Symbol.iterator]()]); });
+        DataRow.prototype.values  = dynamic(self, 'values',  function(){ return Series.flat([...values(this)]);  });
+        DataRow.prototype.entries = dynamic(self, 'entries', function(){ return Series.flat([...entries(this)]); });
+
+        Object.setPrototypeOf(self, DataRow.prototype);
+        return init();
     };
 
     DataRow.prototype  = Object.create(Object.prototype);
@@ -1520,15 +1547,30 @@
         function(){ return this.meta.registry.columns.get(this.meta.id); },
         function(value){ if(this.meta.id) this.meta.registry.columns.set(this.meta.id, value); }
     );
-    Series.prototype.meta.columns = dynamic(Series.prototype.meta, 'columns', function(){return Series.prototype._columns; });
-    Series.prototype._id     = Series.prototype.getprop('_id', function(){ return this.meta.id;}, function(value){ this.meta.id = value; });
-    Series.prototype._index  = Series.prototype.getprop('_index', function(){ return this.meta.index;}, function(value){ this.meta.index = value; });
-    Series.prototype._type   = Series.prototype.getprop('_type', function(){return this.meta.type;}, function(value){ this.meta.type = value; });
-    Series.prototype._cache  = Series.prototype.getprop('_cache', function(){return this.meta.cache;}, function(value){ this.meta.cache = value; });
-    Series.prototype._lambda = Series.prototype.getprop('_lambda', function(){return this.meta.lambda;}, function(value){ this.meta.lambda = value; });
-    DataColumn.prototype._parent = dynamic(DataColumn.prototype, '_parent', function(){return this.meta.parent;}, function(value){ this.meta.parent = value; });
-    DataColumn.prototype._label  = dynamic(DataColumn.prototype, '_label', function(){return this.meta.label;}, function(value){ this.meta.label = value; });
 
+    Series.prototype.meta.columns = dynamic(Series.prototype.meta, 'columns',
+                                                           function(){ return Series.prototype._columns;});
+
+    Series.prototype._id = Series.prototype.getprop('_id', function(){return this.meta.id;},
+                                                           function(value){ this.meta.id = value;});
+
+    Series.prototype._index = Series.prototype.getprop('_index', function(){return this.meta.index;},
+                                                                 function(value){ this.meta.index = value;});
+
+    Series.prototype._type = Series.prototype.getprop('_type', function(){return this.meta.type;},
+                                                               function(value){ this.meta.type = value;});
+
+    Series.prototype._cache = Series.prototype.getprop('_cache', function(){return this.meta.cache;},
+                                                                 function(value){ this.meta.cache = value;});
+
+    Series.prototype._lambda = Series.prototype.getprop('_lambda', function(){return this.meta.lambda;},
+                                                                   function(value){ this.meta.lambda = value;});
+
+    DataColumn.prototype._parent = dynamic(DataColumn.prototype, '_parent', function(){return this.meta.parent;},
+                                                                            function(value){ this.meta.parent = value;});
+
+    DataColumn.prototype._label = dynamic(DataColumn.prototype, '_label', function(){return this.meta.label;},
+                                                                          function(value){ this.meta.label = value;});
 
     /* Series Object Methods */
     Series.prototype.column = function(col){
@@ -1549,7 +1591,7 @@
             _columns = this._columns!==undefined ? this._columns : Series.flat([]);
 
             if(this.length){
-                props = Series.flat(Object.getOwnPropertyNames(this[0]));
+                props = Series.flat(Object.keys(this[0]));
 
                 if(_columns.length==props.length && _columns.is.not.empty())
                     if(_columns.diff(props).length<1)
@@ -1572,25 +1614,26 @@
             return _columns;
         }
         else{
-            var c, row;
-            var clone = this.clone();
-
+            var c, row, len;
+            if(cols.length>0 && cols.every(function(c){return c!==undefined;}) ){
             commit = commit!==undefined ? commit : true;
 
-            while (this.length){ this.pop(); }
+            if(cols!==this._columns){
+                var clone = this.splice(0);
+                while (this.length){ this.pop(); }
 
-            for(row=0; row<clone.length; row++){
-                if(this[row]===undefined) this[row] = {};
+                for(row=0, len=clone.length; row<len; row++){
+                    if(this[row]===undefined) this[row] = {};
 
-                for(c=0; c<cols.length; c++)
-                    this[row][cols[c]] = clone[row][cols[c]];
+                    for(c=0; c<cols.length; c++)
+                        this[row][cols[c]] = clone[row][cols[c]];
+                }
             }
 
-            if(cols)
-                this._columns = Series.flat(cols);
-
+            if(cols) this._columns = Series.flat(cols);
             if(AUTO_COMMIT && commit) this.commit(this);
-            return this;
+            return this._columns;
+            }
         }
     };
 
@@ -1633,30 +1676,19 @@
 
     Series.prototype.clone = function(){
         var clone, proto;
-
         proto = Object.getPrototypeOf(this);
-        //clone = Series.new(this);
-        clone = this.map(function(a){
-            var b = Object.assign({}, a);
-            Object.setPrototypeOf(b, Object.create(DataRow.prototype));
-            return b;
+        clone = this.map(function(a, i, s){
+            //var b = new DataRow(Object.assign({}, a), s);
+            //var b = Object.assign(Object.create(DataRow.prototype), a)
+            //Object.setPrototypeOf(b, Object.create(DataRow.prototype));
+            var b = {};
+            for(var c in a) b[c] = a[c];
+            return new DataRow(b, s);
         });
 
-        //inherit(clone, this);
         Object.setPrototypeOf(clone, Object.create(proto));
-
-        //clone.meta.registry.columns.set(clone._id, undefined);
-        //clone.columns();
-        //clone.col.reset(series);
         proto = Object.create(proto);
         Object.setPrototypeOf(clone, proto);
-        //clone.columns();
-        //clone.col.reset(clone);
-        //console.log(_id);
-        //console.log(Object.getPrototypeOf(clone)===Object.getPrototypeOf(this));
-        //clone._id += 1;
-        //console.log(clone._id===this._id);
-
         return clone;
     };
 
@@ -1764,10 +1796,11 @@
         commit = typeof commit!='undefined' ? commit : AUTO_COMMIT;
 
         for(var i=0, n=this.length; i<n; i++)
-            if(this[i]!==null&&this[i]!==undefined)
-                this[i][label] = i + offset;
+            if(this[i]!==null && this[i]!==undefined)
+                this[i][label] = this[i][label]!==undefined ? this[i][label] + offset : i + offset;
 
-        this.index = label;
+        if(this._index!=label)
+            this.index = label;
 
         if(commit)
             this.commit();
@@ -1906,7 +1939,7 @@
                     copy[col] = row[col];
             return new DataRow(copy);
         });
-        selected._id = _id++;
+        selected._id = ID++;
         //selected = Series.from(selected);
         selected.columns(args);
         return selected;
@@ -2401,7 +2434,7 @@
                             var R = right[j];
 
                             /* Found row with matching identifier */
-                            if(L[on] == R[on]){
+                            if(L[on] === R[on]){
                                 for(var k in  R){
                                     if(!L.hasOwnProperty(k))
                                         L[k] = R[k];
@@ -2548,7 +2581,6 @@
             s1 = this;
             s2 = args[0];
         }
-
         return _merge_();
     };
 
