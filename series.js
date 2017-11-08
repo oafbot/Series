@@ -24,6 +24,7 @@
 
         Series,
         Promote,
+        Temporary,
         BaseSeries,
         DataSeries,
         DataColumn,
@@ -155,6 +156,7 @@
             return result;
         }.bind(options);
     };
+
 
     Promote = function(a, d){
         var self = this;
@@ -324,6 +326,24 @@
     Series.AUTO_APPLY   = AUTO_APPLY;
     Series.DAY_ZERO     = DAY_ZERO;
 
+    Temporary = function(){
+        var temp = [];
+
+        temp.add = function(obj){
+            temp.push(obj);
+            return temp.indexOf(obj);
+        };
+
+        temp.destroy = function(ref){
+            console.log(temp.indexOf(ref));
+            delete temp[temp.indexOf(ref)];
+            Series.destroy(ref);
+        };
+
+        return temp;
+    };
+
+    Series.registry = { columns: new Map(), shared : [], temp : new Temporary() };
 
     /* Factory method to be exposed to the outside */
     DataSeries = function DataSeries(data, index){
@@ -331,24 +351,22 @@
         series = new Series(data);
         Object.setPrototypeOf(series, Object.create(DataSeries.prototype));
 
-        columns = series.columns();
-
         proto = Object.getPrototypeOf(series);
         proto.meta = {
-            id       : undefined,
-            index    : undefined,
-            columns  : undefined,
-            type     : undefined,
+            id       : ID++,
+            index    : index,
+            columns  : Series.registry.columns,
+            shared   : Series.registry.shared,
+            type     : "series",
             lambda   : undefined,
             cache    : undefined,
-            registry : undefined
         };
 
-        proto.meta.registry = DataSeries.prototype.meta.registry;
-        proto.meta.type = "series";
-        proto.meta.id = ID++;
-        proto.meta.index = index;
-        proto.meta.registry.columns.set(proto.meta.id, columns);
+        //proto.meta.registry = DataSeries.prototype.meta.registry;
+        //proto.meta.type = "series";
+        //proto.meta.id = ID++;
+        //proto.meta.index = index;
+        proto.meta.columns.set(proto.meta.id, series.columns());
         //Object.setPrototypeOf(series, proto);
 
         //if(series.length && series.is.not.column()){
@@ -373,20 +391,26 @@
         if(AUTO_COMMIT)
            series.commit();
 
-        //series._columns = undefined;
+        series._columns = undefined;
         columns = series.columns();
         proto.col.reset(proto);
-        proto.meta.registry.columns.set(proto.meta.id, columns);
-        proto = Object.create(proto);
-        Object.setPrototypeOf(series, proto);
+        //proto.meta.registry.columns.set(proto.meta.id, columns);
+        //proto = Object.create(proto);
+        //Object.setPrototypeOf(series, proto);
         return series;
     };
 
     DataSeries.prototype = Series.prototype;
     DataSeries.toString = function(){ return "DataSeries() { return  Series; }"; };
-    DataSeries.prototype.meta = { id:undefined, index:undefined, columns:undefined, type:undefined, lambda:undefined, cache:undefined };
-    DataSeries.prototype.meta.registry = { columns: new Map() };
-    DataSeries.prototype.meta.shared = [];
+    DataSeries.prototype.meta = {
+        id      : undefined,
+        index   : undefined,
+        columns : undefined,
+        shared  : undefined,
+        type    : undefined,
+        lambda  : undefined,
+        cache   : undefined
+    };
 
     Series.factory = DataSeries;
     Series.new     = DataSeries;
@@ -743,6 +767,13 @@
         return Series.from(empty(num));
     };
 
+    Series.destroy = function(pointer){
+        Series.registry.columns.delete(pointer._id);
+        pointer = null;
+        console.log(pointer)
+        delete pointer;
+    };
+
     Series.prototype.getprop = (function(prop, getter, setter, shared){
         Object.defineProperty(this, prop, {
             get: getter,
@@ -752,7 +783,7 @@
             configurable: true,
         });
         if(prop!==undefined && shared===undefined || shared===true)
-            DataSeries.prototype.meta.shared.push(prop);
+            Series.registry.shared.push(prop);
     }).bind(Series.prototype);
 
     Series.extensions = { static:{}, object:{} };
@@ -913,11 +944,11 @@
     };
 
     is.prototype.not = dynamic(is.prototype, 'not', function(){
-            var
-            self   = this,
-            series = this.series,
-            getter = function(target, name){ return function(){ return !target.is[name].apply(self, arguments); }; };
-            return new Proxy(series, { get: getter });
+        var
+        self   = this,
+        series = this.series,
+        getter = function(target, name){ return function(){ return !target.is[name].apply(self, arguments); }; };
+        return new Proxy(series, { get: getter });
     });
 
     is.prototype.date = function(col){
@@ -1529,12 +1560,14 @@
     // });
 
     Series.prototype._columns = Series.prototype.getprop('_columns',
-        function(){ return this.meta.registry.columns.get(this.meta.id); },
-        function(value){ if(this.meta.id) this.meta.registry.columns.set(this.meta.id, value); }
+        function(){ return this.meta.columns.get(this.meta.id); },
+        function(value){ if(this.meta.id) this.meta.columns.set(this.meta.id, value); }
     );
 
-    Series.prototype.meta.columns = dynamic(Series.prototype.meta, 'columns',
-                                                           function(){ return Series.prototype._columns;});
+    Series.prototype.meta.columns = Series.registry.columns;
+    Series.prototype.meta.shared  = Series.registry.shared;
+    //Series.prototype.meta.columns = dynamic(Series.prototype.meta, 'columns',
+    //                                                       function(){ return Series.prototype._columns;});
 
     Series.prototype._id = Series.prototype.getprop('_id', function(){return this.meta.id;},
                                                            function(value){ this.meta.id = value;});
@@ -1660,17 +1693,24 @@
     };
 
     Series.prototype.clone = function(){
-        var clone, proto;
-        proto = Object.getPrototypeOf(this);
-        clone = this.map(function(a, i, s){
-            var b = new DataRow(Object.assign({}, a), s);
-            return b;
-        });
-
-        Object.setPrototypeOf(clone, Object.create(proto));
-        proto = Object.create(proto);
-        Object.setPrototypeOf(clone, proto);
+        var clone = [];
+        this.forEach(function(r, i, s){ clone.push(new DataRow(Object.assign({}, r), s)); });
+        clone = Series.from(clone);
+        Series.registry.temp.add(clone);
+        //console.log(temp)
         return clone;
+        //var clone, proto;
+        //proto = Object.getPrototypeOf(this);
+        // clone = this.map(function(a, i, s){
+        //     var b = new DataRow(Object.assign({}, a), s);
+        //     return b;
+        // });
+        // Object.setPrototypeOf(clone, Object.create(proto));
+        //Object.setPrototypeOf(clone, proto);
+        //proto = Object.create(proto);
+        //clone._id = ID++;
+       // clone.columns();
+        //return clone;
     };
 
     Series.prototype.diff = function(a){
@@ -1915,8 +1955,8 @@
                     copy[col] = row[col];
             return new DataRow(copy, selected);
         });
-        selected._id = ID++;
-        selected.columns(args);
+        //selected._id = ID++;
+        //selected.columns(args);
         return selected;
     };
 
@@ -2153,7 +2193,7 @@
             }
 
             op = statement.operator.toLowerCase();
-            series = Series.from([]);
+            //series = Series.from([]);
 
             if(istype(left)=='Number' || istype(left)=='String'){
                 switch(op){
@@ -2245,7 +2285,7 @@
                         series = self.filter(function(row){ if(row[left]) return row[left].match(new RegExp(right,'i'))!==null; });
                         break;
                     default:
-                        series = Series.from([]);
+                        series = Series.flat([]);
                         break;
                 }
             }
@@ -2267,25 +2307,25 @@
                     case '!=':
                         series = left.diff(right);
                         break;
-                    case '<=':
-                        series = Series.from([]);
-                        break;
-                    case '>=':
-                        series = Series.from([]);
-                        break;
-                    case '>':
-                        series = Series.from([]);
-                        break;
-                    case '<':
-                        series = Series.from([]);
-                        break;
+                    // case '<=':
+                    //     series = Series.from([]);
+                    //     break;
+                    // case '>=':
+                    //     series = Series.from([]);
+                    //     break;
+                    // case '>':
+                    //     series = Series.from([]);
+                    //     break;
+                    // case '<':
+                    //     series = Series.from([]);
+                    //     break;
                     default:
                         series = Series.from([]);
                         break;
                 }
             }
 
-            series = typeof series===undefined ? Series.from([]) : series;
+            //series = typeof series===undefined ? Series.from([]) : series;
 
             inherit(series, self);
             return series;
@@ -2462,6 +2502,7 @@
         _merge_ = function(){
             var left,
                 right,
+                proto,
                 longer,
                 shorter,
                 merged,
@@ -2516,11 +2557,11 @@
                 merged = _join_(left, right);
             }
 
-            //proto = Object.getPrototypeOf(merged);
-            merged._columns = undefined;
-            merged._columns = merged.columns();
-            merged.col.reset(merged);
-            //Object.setPrototypeOf(merged, proto);
+            proto = Object.getPrototypeOf(merged);
+            proto._columns = undefined;
+            proto._columns = merged.columns();
+            proto.col.reset(proto);
+            Object.setPrototypeOf(merged, proto);
             merged._id = ID++;
             return merged;
         };
@@ -2906,16 +2947,18 @@
                 }
             });
 
-            remainder = series.clone();
+            //remainder = series.clone();
 
             cutoffs.forEach(function(selects, index){
                 cut       = cutoffs[index];
                 column    = cut[cut.length - 1];
-                segment   = remainder.left.select(column);
+                segment   = series.left.select(column);
                 remainder = series.right.select(columns[segment.length]);
                 wrapped.push(segment);
             });
+
             console.log(wrapped);
+            console.log(series);
 
             for(var i=0; i<wrapped.length; i++){
                 console.log("\n");
@@ -2930,23 +2973,28 @@
             console.log("\n");
             display(series, columns, offset, breakpoint);
         }
-        return { showing : series.count, count : this.count, index : series._index };
+        var count = series.count;
+        var idx   = series._index;
+        //Series.registry.temp.destroy(series);
+        return { showing : count, count : this.count, index : idx };
     };
 
-    exports.Series        = Series.factory;
-    exports.Series.Base   = BaseSeries;
-    exports.Series.Column = Series.Column;
-    exports.Series.Row    = Series.Row;
+    exports.Series          = Series.factory;
+    exports.Series.Base     = BaseSeries;
+    exports.Series.Column   = Series.Column;
+    exports.Series.Row      = Series.Row;
+    exports.Series.registry = Series.registry;
 
-    exports.Series.new    = Series.new;
-    exports.Series.from   = Series.from;
-    exports.Series.flat   = Series.flat;
-    exports.Series.empty  = Series.empty;
-    exports.Series.export = Series.export;
-    exports.Series.json   = Series.json;
-    exports.Series.csv    = Series.csv;
-    exports.Series.load   = Series.load;
-    exports.Series.column = Series.column;
+    exports.Series.new     = Series.new;
+    exports.Series.from    = Series.from;
+    exports.Series.flat    = Series.flat;
+    exports.Series.empty   = Series.empty;
+    exports.Series.export  = Series.export;
+    exports.Series.json    = Series.json;
+    exports.Series.csv     = Series.csv;
+    exports.Series.load    = Series.load;
+    exports.Series.column  = Series.column;
+    exports.Series.destroy = Series.destroy;
 
     for(var name in Series.extensions.static)
         exports.Series[name] = Series.extensions.static[name];
