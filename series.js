@@ -14,17 +14,20 @@
         istype,
         colnums,
         dynamic,
+        purge,
         extend,
         rebase,
         inherit,
         getproto,
         namespace,
+        applicable,
 
         Series,
         Promote,
         BaseSeries,
         DataSeries,
         DataColumn,
+        DataRow,
         SeriesDataException;
 
     istype = function(obj){
@@ -65,7 +68,7 @@
     };
 
     getproto = function(_base_){
-        var _index, _indexed, _columns;
+        var _index, _indexed, _columns, _lambda, _type, _id;
         var proto = Object.getPrototypeOf(_base_);
 
         _index   = _base_._index;
@@ -84,8 +87,6 @@
             proto._index = _index;
         if(_indexed!==undefined)
             proto._indexed = _indexed;
-        // if(_columns!==undefined && _columns.length>0)
-        //     proto._columns = undefined;
         if(_lambda!==undefined)
             proto._lambda = undefined;
         if(_type!==undefined)
@@ -123,8 +124,6 @@
                 context = context[spaces[i]];
             }
         }
-        //if(context===global)
-        //    throw new ReferenceError("Invalid parameter for variable assignment.");
         return {path:context, name:name};
     };
 
@@ -257,7 +256,7 @@
         */
 
         this.message = message;
-        this.code = 0;
+        this.code = code || 0;
         this.name = !name ? 'SeriesDataException' : name;
         console.error(this.name +": "+ this.message);
     };
@@ -275,7 +274,7 @@
     BaseSeries.prototype = Object.create(Array.prototype);
 
     Series = function Series(){
-        var series, row, columns, self, proto;
+        var series, self;
         self = this;
         series = new BaseSeries(arguments[0]);
 
@@ -326,10 +325,9 @@
     Series.DAY_ZERO     = DAY_ZERO;
 
 
-
     /* Factory method to be exposed to the outside */
     DataSeries = function DataSeries(data, index){
-        var proto, series, columns, row;
+        var proto, series, columns;
         series = new Series(data);
         Object.setPrototypeOf(series, Object.create(DataSeries.prototype));
 
@@ -394,7 +392,7 @@
     Series.new     = DataSeries;
 
     DataColumn = function DataColumn(data, name, parent){
-        var self, proto, target;
+        var self, proto;
         if(data instanceof Series)
             data = data.flatten();
         self = new Series(data);
@@ -407,7 +405,6 @@
         proto.meta.parent = parent;
         proto.meta.type   = "column";
         proto.meta.lambda = parent.meta.lambda;
-        //proto.col.purge(parent, parent._columns);
 
         proto.apply = function(column){
             if(this.meta.lambda!==undefined){
@@ -444,9 +441,9 @@
 
     DataRow = function DataRow(row, series, index){
         var self = {};
-        var proto = DataRow.prototype;
+        //var proto = DataRow.prototype;
         var columns = series._columns;
-        var keys, values;
+        var values, init, entries;
 
         if(columns===undefined || Object.keys(row).length>columns.length){
             columns = [...Object.keys(row)];
@@ -464,8 +461,6 @@
         if(columns && columns.length && columns!==series._columns)
             series.columns(columns);
 
-        //console.log(series._columns, row)
-
         init = function(){
             for(var c=0, n=columns.length; c<n; c++){
                 Object.defineProperty(self, columns[c], {
@@ -474,7 +469,6 @@
                     writable: true,
                     value: row[columns[c]]
                 });
-            //self[columns[c]] = row[columns[c]];
             }
             return self;
         };
@@ -767,7 +761,6 @@
 
         if(only===undefined){
             Series[name] = new implementation();
-            //Series[name] = dynamic(Series, name, function(){ return new implementation(); });
             Series.prototype[name] = Series.prototype.getprop(name, function(){ return new implementation(this); });
 
             Series.extensions.static[name] = implementation.prototype;
@@ -797,7 +790,7 @@
     });
 
     is.prototype.boolean = function(x){
-        var i, char, check;
+        var check;
 
         check = function(item){ return typeof item=='boolean' || item instanceof Boolean; };
 
@@ -830,7 +823,7 @@
     };
 
     is.prototype.string = function(x){
-        var i, char, check;
+        var check;
 
         check = function(item){ return typeof item=='string' || item instanceof String; };
 
@@ -880,7 +873,7 @@
     };
 
     is.prototype.empty = function(x){
-        var i, char, check;
+        var check;
 
         check = function(item){
             return(
@@ -928,7 +921,7 @@
     });
 
     is.prototype.date = function(col){
-       var i, char, check;
+       var check;
 
         if(this.series.count<=0)
             return false;
@@ -969,16 +962,16 @@
     string.prototype = new string(Series.prototype);
 
     string.prototype.upper =
-    string.prototype.allcaps = function(column){
+    string.prototype.allcaps = function(){
         return this.series.map( (str) => str.toUpperCase() );
     };
 
-    string.prototype.lower = function(column){
+    string.prototype.lower = function(){
         return this.series.map();
     };
 
     string.prototype.title = function(){
-        return this.series.map(function(){ str.replace(/\w\S*/g,
+        return this.series.map(function(str){ return str.replace(/\w\S*/g,
             function(txt){ return txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase(); });
         });
     };
@@ -999,7 +992,7 @@
                 var proto,
                     outputs = [],
                     units = Object.keys(self.units),
-                    stringout = "",
+                    stringout = "";
 
                 input     = input===undefined ? self.series : input;
                 precision = precision!==undefined ? precision : self.unit;
@@ -1028,7 +1021,6 @@
                 };
 
                 if(input instanceof Array){
-                    //return input.map(function(item){ return exec(item, precision); });
                     input.forEach(function(item){ outputs.push(exec(item, precision)); });
                     return Series.from(outputs);
                 }
@@ -1129,7 +1121,7 @@
         if(input instanceof Array){
             if(typeof value=='function')
                 input.map(function(item, index, series){ series[index] = value.call(input, item, index, series); });
-            else if(values instanceof Array)
+            else if(value instanceof Array)
                 input.map(function(item, index, series){ series[index] = value[index]; });
             else
                 input.map(function(item, index, series){ series[index] = value; });
@@ -1151,7 +1143,6 @@
                 return this.series.lambda(this.date).apply();
             return this.series.lambda(this.date);
         }
-
         return this.date;
     };
 
@@ -1182,7 +1173,7 @@
             now = Date.now();
 
         if( this.series.is.numeric() )
-            converted = this.series.map(function(date, index, series){
+            converted = this.series.map(function(date){
                 if(date*1000<= now) date = date*1000; return new Date(date); });
 
         else if( this.series.is.string() )
@@ -1217,19 +1208,19 @@
 
         if(args.length<2 && args.length>0){
             if(args[0] instanceof Array)
-                 converted = this.series.map(function(row, index, series){ return calc(row, args[0][index]); });
-            else converted = this.series.map(function(row, index, series){ return calc(row, args[0]); });
+                 converted = this.series.map(function(row, index){ return calc(row, args[0][index]); });
+            else converted = this.series.map(function(row){ return calc(row, args[0]); });
         }
         else if(args.length>1){
             if(args[0] instanceof Array && args[1] instanceof Array)
-                converted = args[0].map(function(row, index, series){ return calc(row, args[1][index]); });
+                converted = args[0].map(function(row, index){ return calc(row, args[1][index]); });
             else if(args[0] instanceof Array)
-                converted = this.series.map(function(row, index, series){ return calc(row, args[1]); });
+                converted = this.series.map(function(row){ return calc(row, args[1]); });
             else
                 converted = calc(args[0], args[1]);
         }
         else
-            converted = this.series.map(function(row, index, series){ return calc(row, new Date(Date.now())); });
+            converted = this.series.map(function(row){ return calc(row, new Date(Date.now())); });
 
         if(this.series instanceof DataColumn){
             if(AUTO_APPLY)
@@ -1255,12 +1246,7 @@
 
         var rand = function(){ return Math.floor(Math.random() * (max - min + 1)) + min; };
 
-        //if( this.series.is.column() )
-        //    column = column ? column : this.series._label;
-
-        //var target = this.series.is.column() ? this.series._parent : this.series;
-
-        var applied = this.series.map(function(row, index, series){
+        var applied = this.series.map(function(){
             var value = typeof format!='undefined' ? self.format.call(self, rand(), format, options) : rand();
             return new Date(value);
         });
@@ -1279,11 +1265,10 @@
         * For implementation details of toLocaleDateString, goto:
         * https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date/toLocaleDateString#Syntax
         */
-        var date, format, reformat, options, locale, convert,
-            self = this;
+        var date, format, reformat, options, locale, convert;
 
         reformat = function(_date_, format, options){
-            var date, weekday, year, month, datestring, timestring, tostring,
+            var weekday, month, datestring, timestring, tostring,
                 WeekdayString, MonthString, TimeString, DateString;
 
             WeekdayString = function(){
@@ -1358,8 +1343,7 @@
             };
 
             tostring = function(date, options){
-                //date  = new Date(date);
-                _date = "";
+                var _date = "";
 
                 if(options.weekday)
                     _date += weekday.get(options.weekday, date);
@@ -1506,12 +1490,12 @@
         this.date = this.date===undefined ? this.series : this.date;
 
         if(this.date instanceof Array)
-            this.date.map(function(date, index, series){ if(!(date instanceof Date)) return new Date(date); });
+            this.date.map(function(date){ if(!(date instanceof Date)) return new Date(date); });
 
         if(format===undefined){
             options = { weekday: 'long', year: 'numeric', month:'long', day:'numeric' };
             if(this.date instanceof Array)
-                 this.date = this.date.map(function(date, index, series){ return date.toLocaleString('en-US', options); });
+                 this.date = this.date.map(function(date){ return date.toLocaleString('en-US', options); });
             else this.date = new Date(this.date).toLocaleString('en-US', options);
         }
         else if(typeof format == 'function'){
@@ -1748,10 +1732,7 @@
         if(this.length){
             proto = rebase(this);
             columns = this.columns();
-
-            proto._indexed = this.length    > 0 ? Series.export(this, 'json') : undefined;
-            // proto._columns = columns.length > 0 ? columns : undefined;
-
+            proto._indexed = this.length > 0 ? Series.export(this, 'json') : undefined;
             Object.setPrototypeOf(this, proto);
         }
         return this;
@@ -1811,9 +1792,7 @@
         try{
             throw new SeriesDataException("Primal form does not exist. The prototype chain does not contain a cached copy of the original dataset. To create a copy, call Series.prototype.commit.", "Schema: Reference Error", 10);
         }
-        catch(e){
-            return this;
-        }
+        catch(e){ return this; }
     };
 
     Series.prototype.top = function(limit){
@@ -1934,21 +1913,17 @@
             for(var col in row)
                 if(args.indexOf(col)>-1)
                     copy[col] = row[col];
-            return new DataRow(copy, selected, selected._index);
+            return new DataRow(copy, selected);
         });
-        console.log(selected)
         selected._id = ID++;
-        //selected = Series.from(selected);
         selected.columns(args);
         return selected;
     };
 
     Series.prototype.fill = function(condition, fill){
         /*deal with NaN behavior*/
-        var parts, left, right, lambda,
-
-        self = this,
-        edge = [null, false, true, undefined, NaN];
+        var parts, left, right, lambda;
+        //edge = [null, false, true, undefined, NaN];
 
         if(condition == '*'){
             lambda = function(row){ for(var col in row) row[col] = fill; return row; };
@@ -2136,9 +2111,6 @@
                             right = parts[1].split(/\(|\)|\[|\]/i).filter(Boolean);
                             right = right[0].split(",");
                             right = right.map(function(token){return token.trim();});
-                        }
-                        else{
-
                         }
                     }
                     else{
@@ -2346,7 +2318,6 @@
             on        = 'index',
             label     = {left:'left', right:'right'},
             join      = 'full', /* full or outer, inner, left, right */
-            prototype = Object.getPrototypeOf(this),
             _merge_,
             _join_,
             _resolve_,
@@ -2393,7 +2364,7 @@
         };
 
         _join_ = function(left, right){
-            var swap, merged, unique, ix, intersect;
+            var swap, merged, unique, ix;
 
             if(on=='index'){
                 if(join!='left' && join!='right' && left.length<right.length){
@@ -2489,12 +2460,11 @@
         };
 
         _merge_ = function(){
-            var proto,
-                left,
+            var left,
                 right,
                 longer,
+                shorter,
                 merged,
-                matches,
                 intersect;
 
             left  = s1.clone();
@@ -2613,33 +2583,26 @@
             return column;
         };
 
-        var purge = function(series, columns){
+        var purge = function(series){
             var proto = Object.getPrototypeOf(series);
             var desc = Object.keys(Object.getOwnPropertyDescriptors(proto));
             var keys = Object.keys(proto);
             var purge = desc.filter(function(i){
                 return keys.indexOf(i)<0 && proto.shared.indexOf(i)<0 && i!="undefined" && i!="length" && i.charAt(0)!="_";
             });
-            console.log(purge)
-            //if(!columns.same(purge)){
-                console.log("purging")
-                proto = Object.assign(Object.create(Series.prototype), proto);
 
-                for(var p in purge){
-                    //console.log(JSON.stringify(series[purge[p]]))
-                    delete proto[purge[p]];
-                    delete proto.col[purge[p]];
-                }
-                // proto._columns = undefined;
-                //series.columns();
-                Object.setPrototypeOf(series, proto);
-            //}
+            proto = Object.assign(Object.create(Series.prototype), proto);
+
+            for(var p in purge){
+                delete proto[purge[p]];
+                delete proto.col[purge[p]];
+            }
+            Object.setPrototypeOf(series, proto);
         };
 
         var reset = function(series){
             var proto, columns;
             proto = Object.getPrototypeOf(self);
-            //series._columns = undefined;
             columns = series.columns();
             series._columns = columns;
             columns.forEach(function(name){
@@ -2652,17 +2615,16 @@
             return proto;
         };
 
-        var setter = function(target, name, value, receiver){
-            var columns;
+        var setter = function(target, name, value){
             if(target.is.not.empty() && value){
                 if(typeof value!=='undefined' && value instanceof Array)
-                    target = target.map(function(row, index, series){ row[name] = value[index]; return row; });
+                    target = target.map(function(row, index){ row[name] = value[index]; return row; });
                 else if(typeof value!=='undefined')
-                    target = target.map(function(row, index){ row[name] = value; return row; });
+                    target = target.map(function(row){ row[name] = value; return row; });
             }
         };
 
-        var getter = function(target, name, receiver){
+        var getter = function(target, name){
             if(name=='reset')
                 return reset.bind(target);
             else if(name=='purge')
@@ -2671,8 +2633,6 @@
             return Series.column([...values], name, target);
         };
 
-        //if(self._type!='series'){
-        //reset(self);
         var proxy = new Proxy(self, { get: getter, set: setter });
         return proxy;
     });
@@ -2681,7 +2641,6 @@
         var num,
             num2,
             rows,
-            index,
             indecies = [],
             self = this;
 
@@ -2749,7 +2708,7 @@
     };
 
     Series.prototype.add = Series.prototype.getprop('add', function(){
-        var columns, proto, self = this;
+        var proto, self = this;
         return {
             column : function(name, init){
                 self = self.map(function(row){row[name] = init!==undefined ? init : null; return row;});
@@ -2761,9 +2720,7 @@
                 }
                 else self.columns();
                 proto = Object.getPrototypeOf(self);
-                //self._columns = undefined;
                 proto.col.reset(proto);
-                //Object.setPrototypeOf(self, proto);
                 return self;
             },
             row : function(values, position){
@@ -2789,6 +2746,7 @@
 
     Series.prototype.show = function(limit, wrap){
         var row,
+            columns,
             table   = [],
             series  = this;
 
@@ -2822,11 +2780,7 @@
         }
 
         for(var i=0; i<series.length; i++){
-            if(series instanceof Series){
-                var value = series[i];
-            }
-            else value = series[0];
-
+            var value = series instanceof Series ? series[i] : series[0];
             row = new Row(columns, value);
             table.push(row);
         }
@@ -2838,7 +2792,7 @@
         return series;
     };
 
-    Series.prototype.peek = function(){ Series.prototype.show.call(this, 10); return this.count; };
+    Series.prototype.peek = function(){ this.show(10); return this.count; };
 
     Series.prototype.tabular = function(wrap){
         var hr,
@@ -2846,6 +2800,7 @@
             col,
             spc,
             cut,
+            render,
             repeat,
             values,
             display,
@@ -2855,7 +2810,6 @@
             remainder,
             breakpoint,
             offset  = 0,
-            wrap    = wrap ? wrap : 80,
             width   = [],
             max     = [],
             spacer  = 4,
@@ -2863,9 +2817,11 @@
             wrapped = [],
             cutoffs = [],
             selects = [],
-            _cols_  = this.columns();
-            columns = Series.flat(['index'].concat(_cols_));
+            _cols_  = this.columns(),
+            columns = Series.flat(['index'].concat(_cols_)),
             series  = this.clone();
+
+        wrap = wrap ? wrap : 80;
 
         repeat = function(length, char){
            return Array(length>0 ? length+1 : 1).join(char!==undefined ? char : " ");
@@ -2899,7 +2855,7 @@
         };
 
         display = function(series, columns, offset, breakpoint){
-            table = [];
+            var table = [];
             for(var i=0; i<series.length; i++){
                 row    = i + repeat(max[0] - String(i).length + spacer);
                 spc    = [];
@@ -2918,7 +2874,7 @@
             breakpoint = 10;
         }
 
-        columns.forEach(function(column, index){
+        columns.forEach(function(column){
             values = [];
             series.forEach(function(row, index){ values.push(column!='index' ? String(row[column]) : String(index)); });
             longest = Series.flat([column].concat(values)).longest().length;
@@ -2956,10 +2912,10 @@
                 cut       = cutoffs[index];
                 column    = cut[cut.length - 1];
                 segment   = remainder.left.select(column);
-                remainder = remainder.right.select(columns[segment.length-1]);
-                console.log(column, columns[segment.length-1], remainder)
+                remainder = series.right.select(columns[segment.length]);
                 wrapped.push(segment);
             });
+            console.log(wrapped);
 
             for(var i=0; i<wrapped.length; i++){
                 console.log("\n");
