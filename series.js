@@ -24,7 +24,6 @@
 
         Series,
         Promote,
-        Temporary,
         BaseSeries,
         DataSeries,
         DataColumn,
@@ -69,11 +68,11 @@
     };
 
     getproto = function(_base_){
-        var _index, _indexed, _columns, _lambda, _type, _id;
+        var _index, _cache, _columns, _lambda, _type, _id;
         var proto = Object.getPrototypeOf(_base_);
 
         _index   = _base_._index;
-        _indexed = _base_._indexed;
+        _cache   = _base_._cache;
         _columns = _base_._columns;
         _lambda  = _base_._lambda;
         _type    = _base_._type;
@@ -86,8 +85,8 @@
 
         if(_index!==undefined)
             proto._index = _index;
-        if(_indexed!==undefined)
-            proto._indexed = _indexed;
+        if(_cache!==undefined)
+            proto._cache = _cache;
         if(_lambda!==undefined)
             proto._lambda = undefined;
         if(_type!==undefined)
@@ -326,28 +325,12 @@
     Series.AUTO_APPLY   = AUTO_APPLY;
     Series.DAY_ZERO     = DAY_ZERO;
 
-    Temporary = function(){
-        var temp = [];
-
-        temp.add = function(obj){
-            temp.push(obj);
-            return temp.indexOf(obj);
-        };
-
-        temp.destroy = function(ref){
-            console.log(temp.indexOf(ref));
-            delete temp[temp.indexOf(ref)];
-            Series.destroy(ref);
-        };
-
-        return temp;
-    };
-
-    Series.registry = { columns: new Map(), shared : [], temp : new Temporary() };
+    Series.registry = { columns: new Map(), shared : [], clear : function(id){ this.columns.delete(id); } };
 
     /* Factory method to be exposed to the outside */
     DataSeries = function DataSeries(data, index){
         var proto, series, columns;
+
         series = new Series(data);
         Object.setPrototypeOf(series, Object.create(DataSeries.prototype));
 
@@ -361,24 +344,10 @@
             lambda   : undefined,
             cache    : undefined,
         };
-
-        //proto.meta.registry = DataSeries.prototype.meta.registry;
-        //proto.meta.type = "series";
-        //proto.meta.id = ID++;
-        //proto.meta.index = index;
         proto.meta.columns.set(proto.meta.id, series.columns());
-        //Object.setPrototypeOf(series, proto);
 
-        //if(series.length && series.is.not.column()){
         for(var i=0, n=series.length; i<n; i++)
             series[i] = new DataRow(series[i], series, index);
-        //}
-
-        /*
-            if(index!==undefined){
-            series.index = index;
-        }
-        else*/
 
         if(typeof data._index!=='undefined'){
             inherit(series, data);
@@ -394,9 +363,6 @@
         series._columns = undefined;
         columns = series.columns();
         proto.col.reset(proto);
-        //proto.meta.registry.columns.set(proto.meta.id, columns);
-        //proto = Object.create(proto);
-        //Object.setPrototypeOf(series, proto);
         return series;
     };
 
@@ -768,6 +734,7 @@
     };
 
     Series.destroy = function(pointer){
+        console.log(pointer._id)
         Series.registry.columns.delete(pointer._id);
         pointer = null;
         console.log(pointer)
@@ -1559,15 +1526,13 @@
     //     return new Proxy(this, getter, setter);
     // });
 
+    Series.prototype.meta.columns = Series.registry.columns;
+    Series.prototype.meta.shared  = Series.registry.shared;
+
     Series.prototype._columns = Series.prototype.getprop('_columns',
         function(){ return this.meta.columns.get(this.meta.id); },
         function(value){ if(this.meta.id) this.meta.columns.set(this.meta.id, value); }
     );
-
-    Series.prototype.meta.columns = Series.registry.columns;
-    Series.prototype.meta.shared  = Series.registry.shared;
-    //Series.prototype.meta.columns = dynamic(Series.prototype.meta, 'columns',
-    //                                                       function(){ return Series.prototype._columns;});
 
     Series.prototype._id = Series.prototype.getprop('_id', function(){return this.meta.id;},
                                                            function(value){ this.meta.id = value;});
@@ -1627,30 +1592,30 @@
 
                 _columns = _columns.unique().purge(undefined);
                 this._columns = _columns;
-                //Object.setPrototypeOf(this, proto);
             }
             return _columns;
         }
         else{
             var c, row, len;
             if(cols.length>0 && cols.every(function(c){return c!==undefined;}) ){
-            commit = commit!==undefined ? commit : true;
+                commit = commit!==undefined ? commit : true;
 
-            if(cols!==this._columns){
-                var clone = this.splice(0);
-                while (this.length){ this.pop(); }
+                if(cols!==this._columns){
+                    var clone = this.splice(0);
+                    while (this.length){ this.pop(); }
 
-                for(row=0, len=clone.length; row<len; row++){
-                    if(this[row]===undefined) this[row] = {};
+                    if(cols) this._columns = Series.flat(cols);
 
-                    for(c=0; c<cols.length; c++)
-                        this[row][cols[c]] = clone[row][cols[c]];
+                    for(row=0, len=clone.length; row<len; row++){
+                        if(this[row]===undefined) this[row] = new DataRow({}, this);
+
+                        for(c=0; c<cols.length; c++)
+                            this[row][cols[c]] = clone[row][cols[c]];
+                    }
                 }
-            }
 
-            if(cols) this._columns = Series.flat(cols);
-            if(AUTO_COMMIT && commit) this.commit(this);
-            return this._columns;
+                if(AUTO_COMMIT && commit) this.commit(this);
+                return this._columns;
             }
         }
     };
@@ -1693,24 +1658,10 @@
     };
 
     Series.prototype.clone = function(){
-        var clone = [];
-        this.forEach(function(r, i, s){ clone.push(new DataRow(Object.assign({}, r), s)); });
-        clone = Series.from(clone);
-        Series.registry.temp.add(clone);
-        //console.log(temp)
-        return clone;
-        //var clone, proto;
-        //proto = Object.getPrototypeOf(this);
-        // clone = this.map(function(a, i, s){
-        //     var b = new DataRow(Object.assign({}, a), s);
-        //     return b;
-        // });
-        // Object.setPrototypeOf(clone, Object.create(proto));
-        //Object.setPrototypeOf(clone, proto);
-        //proto = Object.create(proto);
-        //clone._id = ID++;
-       // clone.columns();
-        //return clone;
+        //var clone = [];
+        //this.forEach(function(r, i, s){ clone.push(new DataRow(Object.assign({}, r), s)); });
+        //return Series.from(clone);
+        return Series.factory(this.map(function(r, i, s){ return new DataRow(Object.assign({}, r), s); }));
     };
 
     Series.prototype.diff = function(a){
@@ -1772,7 +1723,7 @@
         if(this.length){
             proto = rebase(this);
             columns = this.columns();
-            proto._indexed = this.length > 0 ? Series.export(this, 'json') : undefined;
+            proto._cache = this.length > 0 ? Series.export(this, 'json') : undefined;
             Object.setPrototypeOf(this, proto);
         }
         return this;
@@ -1827,8 +1778,8 @@
 
     Series.prototype.revert = function(){
         var proto = Object.getPrototypeOf(this);
-        if(proto.hasOwnProperty('_indexed'))
-            return Series.from(proto._indexed);
+        if(proto.hasOwnProperty('_cache'))
+            return Series.from(proto._cache);
         try{
             throw new SeriesDataException("Primal form does not exist. The prototype chain does not contain a cached copy of the original dataset. To create a copy, call Series.prototype.commit.", "Schema: Reference Error", 10);
         }
@@ -1953,11 +1904,10 @@
             for(var col in row)
                 if(args.indexOf(col)>-1)
                     copy[col] = row[col];
-            return new DataRow(copy, selected);
+            return copy; //new DataRow(copy, selected);
         });
-        //selected._id = ID++;
-        //selected.columns(args);
-        return selected;
+        Series.registry.clear(selected._id+1);
+        return Series.factory(selected);
     };
 
     Series.prototype.fill = function(condition, fill){
@@ -2485,6 +2435,7 @@
                     });
 
                     merged = left.concat(unique);
+                    Series.registry.clear(unique._id);
                 }
             }
 
@@ -2563,6 +2514,9 @@
             proto.col.reset(proto);
             Object.setPrototypeOf(merged, proto);
             merged._id = ID++;
+
+            Series.registry.clear(left._id);
+            Series.registry.clear(right._id);
             return merged;
         };
 
@@ -2976,6 +2930,7 @@
         var count = series.count;
         var idx   = series._index;
         //Series.registry.temp.destroy(series);
+        Series.registry.clear(series._id);
         return { showing : count, count : this.count, index : idx };
     };
 

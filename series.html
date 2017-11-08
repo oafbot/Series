@@ -3,6 +3,8 @@
 <head>
 	<meta charset="utf-8">
 	<script type="text/javascript" src="series.js" ></script>
+    <link rel="stylesheet" href="https://code.jquery.com/qunit/qunit-2.0.1.css">
+    <script type="text/javascript" src="https://code.jquery.com/qunit/qunit-2.0.1.js"></script>
 	<script type="text/javascript">
 
     var domestic = Series([
@@ -33,11 +35,13 @@
     	{ id:7, vaccinated:false,  habitat:'farm',  size:'small'}
 	], 'id');
 
+    var animals, dogs;
+
 	animals = domestic.merge(barnyard, {on:'id'});
 	animals = animals.merge(wild, {on:'id'});
 	animals = animals.merge(data, {on:'id'});
 	animals.columns(["id", "name", "species", "skill", "eats", "habitat", "size", "vaccinated"]);
-    //animals.commit();
+    animals.commit();
 
     animals.add.column('birthday');
     animals.birthday.datetime.random('2005', '2015');
@@ -47,6 +51,16 @@
     /*animals.timestamp.datetime.convert();*/
 
     dogs = animals.where("species=dog");
+
+    QUnit.test("Series basic test", function( assert ) {
+        assert.ok( animals instanceof Series,                     "animals is instance of Series" );
+        assert.ok( animals instanceof Array,                      "animals is instance of Array" );
+        assert.ok( animals.every((i) => i instanceof Series.Row), "rows in animals are all instances of Series.Row" );
+        assert.ok( animals.id instanceof Series.Column,           "columns in animals are instances of Series.Column" );
+        //assert.strictEqual( hello.type, "class",     'type of s1 is "class"' );
+        //assert.strictEqual( hello.node, Salutations, 'Hello was exported to namespace "Salutations"' );
+    });
+
 	</script>
 </head>
 <body>
@@ -54,5 +68,10 @@
     <code>
         animals.show();
     </code>
+
+    <div id="unit-test" style="margin-top:100px;">
+        <div id="qunit"></div>
+        <div id="qunit-fixture"></div>
+    </div>
 </body>
 </html>
