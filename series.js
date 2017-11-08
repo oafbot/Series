@@ -287,7 +287,6 @@
     Series.prototype.constructor = Series;
     Series.prototype.constructor.prototype = BaseSeries.prototype;
     Series.prototype.toString = function(){return '[object Series]';};
-    //Series.prototype._type = "flat";
 
     /* Brute force extend array methods */
     Series.prototype.concat      = function(){ return extend.call(this, Array.prototype.concat,      arguments); };
@@ -431,7 +430,6 @@
 
     DataRow = function DataRow(row, series, index){
         var self = {};
-        //var proto = DataRow.prototype;
         var columns = series._columns;
         var values, init, entries;
 
@@ -1520,12 +1518,6 @@
         return this.date;
     };
 
-    // Series.prototype._ = Series.prototype.getprop('_', function(){
-    //     var getter = function(target, name){ return this.meta[name]; };
-    //     var setter = function(target, name, value){ this.meta[name] = value; };
-    //     return new Proxy(this, getter, setter);
-    // });
-
     Series.prototype.meta.columns = Series.registry.columns;
     Series.prototype.meta.shared  = Series.registry.shared;
 
@@ -1658,10 +1650,8 @@
     };
 
     Series.prototype.clone = function(){
-        //var clone = [];
-        //this.forEach(function(r, i, s){ clone.push(new DataRow(Object.assign({}, r), s)); });
-        //return Series.from(clone);
-        return Series.factory(this.map(function(r, i, s){ return new DataRow(Object.assign({}, r), s); }));
+        return Series.factory(this.map(function(r, i, s){
+            return new DataRow(Object.assign({}, r), s); }));
     };
 
     Series.prototype.diff = function(a){
@@ -1904,7 +1894,7 @@
             for(var col in row)
                 if(args.indexOf(col)>-1)
                     copy[col] = row[col];
-            return copy; //new DataRow(copy, selected);
+            return copy;
         });
         Series.registry.clear(selected._id+1);
         return Series.factory(selected);
@@ -1913,7 +1903,6 @@
     Series.prototype.fill = function(condition, fill){
         /*deal with NaN behavior*/
         var parts, left, right, lambda;
-        //edge = [null, false, true, undefined, NaN];
 
         if(condition == '*'){
             lambda = function(row){ for(var col in row) row[col] = fill; return row; };
@@ -2143,7 +2132,6 @@
             }
 
             op = statement.operator.toLowerCase();
-            //series = Series.from([]);
 
             if(istype(left)=='Number' || istype(left)=='String'){
                 switch(op){
@@ -2274,8 +2262,6 @@
                         break;
                 }
             }
-
-            //series = typeof series===undefined ? Series.from([]) : series;
 
             inherit(series, self);
             return series;
@@ -2901,8 +2887,6 @@
                 }
             });
 
-            //remainder = series.clone();
-
             cutoffs.forEach(function(selects, index){
                 cut       = cutoffs[index];
                 column    = cut[cut.length - 1];
@@ -2927,11 +2911,9 @@
             console.log("\n");
             display(series, columns, offset, breakpoint);
         }
-        var count = series.count;
-        var idx   = series._index;
-        //Series.registry.temp.destroy(series);
+
         Series.registry.clear(series._id);
-        return { showing : count, count : this.count, index : idx };
+        return { showing : series.count, count : this.count, index : series._index };
     };
 
     exports.Series          = Series.factory;
