@@ -57,6 +57,7 @@
         assert.ok( animals instanceof Array,                      "animals is instance of Array" );
         assert.ok( animals.every((i) => i instanceof Series.Row), "rows in animals are all instances of Series.Row" );
         assert.ok( animals.id instanceof Series.Column,           "columns in animals are instances of Series.Column" );
+        assert.ok( dogs instanceof Series,                        "dogs is instance of Series" );
         //assert.strictEqual( hello.type, "class",     'type of s1 is "class"' );
         //assert.strictEqual( hello.node, Salutations, 'Hello was exported to namespace "Salutations"' );
     });

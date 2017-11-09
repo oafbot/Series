@@ -98,6 +98,7 @@
 
     inherit = function(_new_, _base_){
         var proto = rebase(_base_);
+        //if(id!==undefined) proto._id = id===true ? proto._id : _new_._id;
         Object.setPrototypeOf(_new_, Object.create(proto));
         return _new_;
     };
@@ -324,11 +325,18 @@
     Series.AUTO_APPLY   = AUTO_APPLY;
     Series.DAY_ZERO     = DAY_ZERO;
 
-    Series.registry = { columns: new Map(), shared : [], clear : function(id){ this.columns.delete(id); } };
+    Series.registry = {
+        columns: new Map(),
+        shared : [],
+        merges : [],
+        clear : function(id){ this.columns.delete(id); }
+    };
 
     /* Factory method to be exposed to the outside */
     DataSeries = function DataSeries(data, index){
         var proto, series, columns;
+
+        console.trace(data, ID)
 
         series = new Series(data);
         Object.setPrototypeOf(series, Object.create(DataSeries.prototype));
@@ -1599,7 +1607,7 @@
                     if(cols) this._columns = Series.flat(cols);
 
                     for(row=0, len=clone.length; row<len; row++){
-                        if(this[row]===undefined) this[row] = new DataRow({}, this);
+                        if(this[row]===undefined) this[row] = new DataRow({}, this, this._index);
 
                         for(c=0; c<cols.length; c++)
                             this[row][cols[c]] = clone[row][cols[c]];
@@ -1651,7 +1659,7 @@
 
     Series.prototype.clone = function(){
         return Series.factory(this.map(function(r, i, s){
-            return new DataRow(Object.assign({}, r), s); }));
+            return new DataRow(Object.assign({}, r), s, s._index); }), this._index);
     };
 
     Series.prototype.diff = function(a){
@@ -1889,6 +1897,8 @@
         if(args.length==1 && args[0]=='*')
             return selected;
 
+        Series.registry.clear(selected._id);
+
         selected = selected.map(function(row){
             var copy = {};
             for(var col in row)
@@ -1896,8 +1906,8 @@
                     copy[col] = row[col];
             return copy;
         });
-        Series.registry.clear(selected._id+1);
-        return Series.factory(selected);
+
+        return Series.factory(selected, selected._index);
     };
 
     Series.prototype.fill = function(condition, fill){
@@ -2445,8 +2455,11 @@
                 merged,
                 intersect;
 
-            left  = s1.clone();
-            right = s2.clone();
+            //left  = s1.clone();
+            //right = s2.clone();
+
+            left  = Series.registry.merges.indexOf(s1._id)<0 ? s1.clone() : s1;
+            right = Series.registry.merges.indexOf(s2._id)<0 ? s2.clone() : s2;
 
             if(join=='full' || join=='outer'){
                 _resolve_(left, right);
@@ -2499,10 +2512,17 @@
             proto._columns = merged.columns();
             proto.col.reset(proto);
             Object.setPrototypeOf(merged, proto);
-            merged._id = ID++;
+            //merged._id = ID++;
 
-            Series.registry.clear(left._id);
-            Series.registry.clear(right._id);
+            if(merged._id!==left._id)
+                Series.registry.clear(left._id);
+
+            if(merged._id!==right._id)
+                Series.registry.clear(right._id);
+
+            if(Series.registry.merges.indexOf(merged._id)<0)
+                Series.registry.merges.push(merged._id);
+
             return merged;
         };
 
@@ -2699,9 +2719,11 @@
                     copy.push(name);
                     self.columns(copy);
                 }
-                else self.columns();
+                else self.columns([name]);
                 proto = Object.getPrototypeOf(self);
                 proto.col.reset(proto);
+                self.col[name];
+                //Object.setPrototypeOf(self, proto);
                 return self;
             },
             row : function(values, position){
@@ -2895,9 +2917,6 @@
                 wrapped.push(segment);
             });
 
-            console.log(wrapped);
-            console.log(series);
-
             for(var i=0; i<wrapped.length; i++){
                 console.log("\n");
                 offset += i > 0 ? cutoffs[i-1].length : 0;
@@ -2912,7 +2931,7 @@
             display(series, columns, offset, breakpoint);
         }
 
-        Series.registry.clear(series._id);
+        if(this._id!==series._id) Series.registry.clear(series._id);
         return { showing : series.count, count : this.count, index : series._index };
     };
 
