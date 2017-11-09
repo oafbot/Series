@@ -336,8 +336,6 @@
     DataSeries = function DataSeries(data, index){
         var proto, series, columns;
 
-        console.trace(data, ID)
-
         series = new Series(data);
         Object.setPrototypeOf(series, Object.create(DataSeries.prototype));
 
@@ -737,6 +735,12 @@
             return a;
         };
         return Series.from(empty(num));
+    };
+
+    Series.flatten = function(series){
+        if(series!==undefined)
+            return new Array([...series]);
+        return series;
     };
 
     Series.destroy = function(pointer){
@@ -2455,11 +2459,8 @@
                 merged,
                 intersect;
 
-            //left  = s1.clone();
-            //right = s2.clone();
-
-            left  = Series.registry.merges.indexOf(s1._id)<0 ? s1.clone() : s1;
-            right = Series.registry.merges.indexOf(s2._id)<0 ? s2.clone() : s2;
+            left  = s1.clone();
+            right = s2.clone();
 
             if(join=='full' || join=='outer'){
                 _resolve_(left, right);
@@ -2507,21 +2508,20 @@
                 merged = _join_(left, right);
             }
 
+            //Series.registry.clear(left._id);
+            //Series.registry.clear(right._id);
+            //merged._id = ID++;
             proto = Object.getPrototypeOf(merged);
             proto._columns = undefined;
             proto._columns = merged.columns();
             proto.col.reset(proto);
             Object.setPrototypeOf(merged, proto);
-            //merged._id = ID++;
 
             if(merged._id!==left._id)
                 Series.registry.clear(left._id);
 
             if(merged._id!==right._id)
                 Series.registry.clear(right._id);
-
-            if(Series.registry.merges.indexOf(merged._id)<0)
-                Series.registry.merges.push(merged._id);
 
             return merged;
         };
